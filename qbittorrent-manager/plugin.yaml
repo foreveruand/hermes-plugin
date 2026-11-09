@@ -1,0 +1,10 @@
+name: qbittorrent-manager
+version: "1.0.0"
+description: "Manage qBittorrent torrents, tags and RSS rules from Hermes."
+author: foreveruand
+manifest_version: 2
+api_version: 1
+license: MIT
+provides_hooks: []
+python_dependencies:
+  - "httpx>=0.28.1,<1"

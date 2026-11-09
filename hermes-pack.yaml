@@ -1,0 +1,33 @@
+# Hermes 插件包：一键安装本仓库的全部插件（每个条目钉死到确切提交）。
+# 用法（在本文件所在目录）：
+#   hermes plugins pack show ./hermes-pack.yaml     # 先预览
+#   hermes plugins pack install ./hermes-pack.yaml  # 审阅后确认安装
+# 注意：pack 的 ref 必须是 40 位完整 commit SHA（分支名/标签会被拒绝）。
+# 插件代码有更新时，把对应条目的 ref 换成新提交的 SHA 再提交本文件。
+name: hermes-plugin-pack
+description: foreveruand 的自用 Hermes 插件全集（airss / audio-extract / idle-compaction / imap-watcher / media-downloader / qbittorrent-manager / vibeguard）
+author: foreveruand
+version: 1.0.0
+plugins:
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: airss
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: audio-extract
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: idle-compaction
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: imap-watcher
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: media-downloader
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: qbittorrent-manager
+  - repo: foreveruand/hermes-plugin
+    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    subdir: vibeguard
+skills: []

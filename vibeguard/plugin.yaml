@@ -1,0 +1,10 @@
+name: vibeguard
+version: "1.1.0"
+description: "Local masking at the model boundary. Site and device names become stable codes (__VG_HIDDEN_S12__, __VG_HIDDEN_K3__) from a host-local mapping built from a local inventory document; credentials, ID and phone numbers become realistic random values. Both are restored for local tools and for the final answer."
+author: "custom"
+provides_hooks:
+  - transform_llm_output
+  - transform_tool_result
+provides_middleware:
+  - llm_request
+  - tool_request

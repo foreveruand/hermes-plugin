@@ -1,0 +1,35 @@
+name: audio-extract
+version: "1.2.0"
+description: "Lossless video clipping, Whisper audio extraction, and subtitle sync for Hermes Agent."
+author: "custom"
+provides_tools:
+  - video_clip
+  - audio_extract
+  - audio_search
+  - audio_sync_subtitles
+provides_hooks: []
+provides_middleware: []
+config_schema:
+  out_dir:
+    type: string
+    description: "Default output directory for extracted audio and temporary files"
+  scan_dirs:
+    type: array
+    items:
+      type: string
+    description: "Directories to scan and index for media files"
+  db_path:
+    type: string
+    description: "Path to SQLite file index database"
+  jobs_dir:
+    type: string
+    description: "Directory storing pending Whisper transcription jobs"
+  tasks_dir:
+    type: string
+    description: "Directory storing background task records and execution logs"
+  record_dir:
+    type: string
+    description: "Livestream recording directory: /vclip publishes clips to <record_dir>/upload and then removes the source plus its nfo/poster/mobile sidecars"
+  auto_extract:
+    type: object
+    description: "Periodic-scan auto extraction: enabled, format, settle_seconds (file must be untouched this long), sample_wait_seconds, batch_size, max_per_scan, max_seconds_per_scan (defer leftovers past this wall-clock cap), exclude_paths (directory prefixes never auto-extracted), delivery_target (e.g. telegram:123456 for completion briefings)"

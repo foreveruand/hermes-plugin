@@ -1,0 +1,1 @@
+{"api":"plugin_api.py","description":"airss 阅读展板：未读列表/海报墙/站内阅读层，数据来自 airss 本地库","entry":"dist/index.js","icon":"Rss","label":"RSS 展板","name":"airss","tab":{"path":"/airss-board","position":"after:skills"},"version":"1.0.0"}

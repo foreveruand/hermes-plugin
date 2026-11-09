@@ -1,0 +1,6 @@
+name: idle-compaction
+version: "1.0.0"
+description: "Idle context compaction plugin fixing Issue #79357 (clock reset on gateway/facade) and supporting configurable floor tokens."
+author: "custom"
+provides_hooks: []
+provides_tools: []

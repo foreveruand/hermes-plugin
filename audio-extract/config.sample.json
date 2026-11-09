@@ -1,0 +1,20 @@
+{
+  "out_dir": "/mnt/media/Temp",
+  "scan_dirs": [
+    "/mnt/media"
+  ],
+  "db_path": "file_index.db",
+  "jobs_dir": ".jobs",
+  "index_extensions": [
+    ".mp4",
+    ".mkv",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".ts",
+    ".flac"
+  ],
+  "tasks_dir": "tasks",
+  "record_dir": "/mnt/media/record"
+}

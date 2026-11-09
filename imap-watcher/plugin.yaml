@@ -1,0 +1,9 @@
+name: imap-watcher
+version: "1.2.0"
+description: "Real-time single-connection multiplexed IMAP watcher for multiple folders per account with IDLE and low-latency polling."
+author: "foreveruand"
+python_dependencies:
+  - "imapclient>=3,<5"
+provides_tools: []
+provides_hooks: []
+provides_middleware: []

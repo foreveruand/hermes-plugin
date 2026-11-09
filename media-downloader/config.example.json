@@ -1,0 +1,86 @@
+{
+  "_comment": "Host-specific overrides template. Copy to <Hermes home>/data/media-downloader/config.json (gitignored) and edit for this machine. Values below are illustrative placeholders, not real paths. Every key is optional — omit one to fall back to the portable default in config.py, which derives paths from HERMES_HOME / HOME / XDG_CONFIG_HOME / TMPDIR.",
+  "_hint": "State (archives, cookies, gallery-dl.conf) and this config file default to <Hermes home>/data/media-downloader/ so `hermes backup` includes them. `upload_mode` selects the post-download backend: local (destinations are local paths), rclone (destinations are remote specs like remote:path), or bdpan (pack into an encrypted 7z and upload to Baidu Netdisk under bdpan.remote_dir). The modes are mutually exclusive. bdpan uploads also emit an HMD1 handoff code; on another host, send it to /dl to download, decrypt and import into that host's destinations (local paths or rclone specs, regardless of that host's upload_mode).",
+  "_bdpan_hint": "bdpan packs each download into one encrypted 7z split into volumes of bdpan.volume_size (7z syntax: 2g, 1g, 500m; empty, \"0\", \"none\" or \"disabled\" keeps a single file). Every volume is uploaded on its own under remote_dir/<archive_stem>/<archive_stem>.7z.NNN, retried bdpan.upload_retries times, so a broken transfer resumes per volume. Outer names are neutral by default (bdpan.obfuscate_filename: true -> <archive_name_prefix>_<YYYYMMDD>_<random hex>.7z) so the netdisk never sees the work title or circle; set obfuscate_filename to false to get the readable slug back.",
+
+  "config_dir": "/home/user/.hermes/data/media-downloader",
+  "cookies_dir": "/home/user/.hermes/data/media-downloader/cookies",
+  "yt_archive_file": "/home/user/.hermes/data/media-downloader/archive.txt",
+  "gdl_archive_file": "/home/user/.hermes/data/media-downloader/archive-gallery.txt",
+  "gdl_config_file": "/home/user/.hermes/data/media-downloader/gallery-dl.conf",
+
+  "chromium_profile_path": "/home/user/.config/google-chrome-for-testing/Profile1",
+  "chromium_cookie_browser": "chromium:/home/user/.config/google-chrome-for-testing/Profile1",
+
+  "staging_base": "/mnt/fast-scratch/tmp_downloads",
+  "staging_fallback": "/home/user/.hermes/cache/scratch/downloads",
+
+  "default_proxy": "http://proxy.example.com:7890",
+  "domestic_domains": [
+    "bilibili.com",
+    "b23.tv",
+    "douyin.com",
+    "weibo.com",
+    "weibo.cn",
+    "kuaishou.com",
+    "ixigua.com",
+    "youku.com",
+    "qq.com"
+  ],
+
+  "destinations": {
+    "asmr": "/media/library/ASMR",
+    "asmr_r": "/media/library/ASMR_R",
+    "bilibili": "/media/library/bilibili",
+    "pixiv": "/media/library/pixiv",
+    "extract": "/media/library/extract"
+  },
+
+  "asmr": {
+    "api_base": "https://api.asmr-200.com",
+    "hq_only": true,
+    "file_types": ["audio", "image", "text"],
+    "blacklist": ["无SE", "SE無", "无音效", "効果音無し", "なし", "音效cut", "体験版"],
+    "max_concurrent_downloads": 3,
+    "request_timeout_seconds": 30,
+    "download_attempts": 3,
+    "dvtag_timeout_seconds": 3600
+  },
+
+  "bin_fallback_paths": [
+    "/home/user/.local/bin",
+    "/usr/local/bin"
+  ],
+
+  "rclone": {
+    "bin": "rclone",
+    "mode": "move",
+    "exclude": [
+      "*.part",
+      "*.ytdl"
+    ],
+    "flags": [],
+    "stats_interval": "2s",
+    "timeout_seconds": 7200
+  },
+
+  "upload_mode": "local",
+
+  "bdpan": {
+    "bin": "bdpan",
+    "remote_dir": "",
+    "seven_zip_bin": "7z",
+    "password_length": 20,
+    "archive_suffix_len": 6,
+    "archive_name_prefix": "pkg",
+    "obfuscate_filename": true,
+    "volume_size": "2g",
+    "upload_retries": 3,
+    "compress_level": 9,
+    "seven_zip_flags": [],
+    "agentname": "",
+    "timeout_seconds": 7200
+  },
+
+  "tasks_dir": "/home/user/.hermes/data/media-downloader/tasks"
+}

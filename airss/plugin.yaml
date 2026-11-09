@@ -1,0 +1,39 @@
+name: airss
+version: "1.0.0"
+description: "RSS subscription, fetching, AI digest generation and multi-platform notification for Hermes Agent."
+author: "custom"
+provides_tools:
+  - rss_subscription
+  - rss_group
+  - rss_fetch
+  - rss_articles
+  - rss_digest
+  - rss_subscriber
+capabilities:
+  - llm.provider_override
+  - llm.model_override
+provides_hooks: []
+provides_middleware: []
+python_dependencies:
+  - aiosqlite>=0.20.0
+  - feedparser>=6.0.10
+  - jinja2>=3.1.0
+config_schema:
+  ai_config:
+    type: object
+    description: "AI digest and filter settings"
+  fetch_config:
+    type: object
+    description: "RSS fetching settings"
+  rsshub_config:
+    type: object
+    description: "RSSHub base URL and access key"
+  proxy_config:
+    type: object
+    description: "Proxy settings for feed requests"
+  storage_config:
+    type: object
+    description: "Storage and retention settings"
+  delivery_config:
+    type: object
+    description: "Default notification and delivery settings"
