@@ -10,24 +10,24 @@ author: foreveruand
 version: 1.0.0
 plugins:
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: airss
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: audio-extract
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: idle-compaction
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: imap-watcher
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: media-downloader
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: qbittorrent-manager
   - repo: foreveruand/hermes-plugin
-    ref: bf4010efcef49422c3fed0ca2ddde0119b3120df
+    ref: aad9d8b8748fd75e036be06f802cd3f43e6f16da
     subdir: vibeguard
 skills: []
