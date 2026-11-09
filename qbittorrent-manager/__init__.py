@@ -2,7 +2,8 @@
 
 Runs in-process, so it uses the Hermes dependency environment (``httpx`` is
 declared in ``plugin.yaml`` and locked by PM). No host-specific paths: data
-lands under ``$HERMES_HOME`` and config comes from the plugin's own ``.env``.
+and config live in the owning profile's ``data/qbittorrent-manager/`` tree —
+the ``.env`` there (a legacy plugin-dir ``.env`` is migrated automatically).
 """
 
 from __future__ import annotations

@@ -1,7 +1,11 @@
 """qBittorrent WebUI client for the ``qbittorrent-manager`` plugin.
 
-Paths are derived from ``HERMES_HOME`` and this file's own location, never
-hardcoded, so the plugin moves with the profile.
+Paths are derived from this file's own location and ``HERMES_HOME``, never
+hardcoded, so the plugin moves with the profile. User config (the ``.env``
+with QB_URL / QB_USERNAME / QB_PASSWORD / QB_RULE) and the search cache live
+in the owning profile's ``data/qbittorrent-manager/`` tree, which survives
+plugin reinstalls; a legacy ``.env`` in the plugin directory is migrated
+there automatically on first load.
 """
 
 from __future__ import annotations
@@ -17,10 +21,56 @@ import httpx
 PLUGIN_DIR = Path(__file__).resolve().parent
 
 
+def profile_home() -> Path:
+    """The Hermes profile home that owns this plugin.
+
+    The install location is the most reliable signal: the plugin lives at
+    ``<profile>/plugins/qbittorrent-manager/``, and on multi-profile hosts the
+    process-wide ``HERMES_HOME`` may point at the root ``~/.hermes`` instead
+    of this plugin's profile. Falls back to ``HERMES_HOME``, then ``~/.hermes``.
+    """
+    candidate = PLUGIN_DIR.parents[1]
+    if candidate.parent.name == "profiles" or (candidate / "config.yaml").exists() or (candidate / "data").exists():
+        return candidate
+    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+
+
+def hermes_home() -> Path:
+    """Backward-compatible alias: the owning profile's home."""
+    return profile_home()
+
+
+def data_dir() -> Path:
+    return profile_home() / "data" / "qbittorrent-manager"
+
+
+def _env_file() -> Path:
+    """Canonical ``.env`` in the profile data dir; migrates the legacy one.
+
+    Older installs kept ``.env`` inside the plugin directory, where a
+    reinstall could delete it. When only the legacy file exists it is copied
+    into the data dir (0600: it holds the qBittorrent password) and used
+    from there from now on.
+    """
+    canonical = data_dir() / ".env"
+    if canonical.is_file():
+        return canonical
+    legacy = PLUGIN_DIR / ".env"
+    if legacy.is_file():
+        try:
+            data_dir().mkdir(parents=True, exist_ok=True)
+            canonical.write_bytes(legacy.read_bytes())
+            canonical.chmod(0o600)
+            return canonical
+        except OSError:
+            return legacy
+    return canonical
+
+
 def _load_plugin_env() -> None:
-    """Overlay the plugin's own ``.env`` without clobbering real environment values."""
+    """Overlay the plugin's ``.env`` without clobbering real environment values."""
     try:
-        text = (PLUGIN_DIR / ".env").read_text(encoding="utf-8")
+        text = _env_file().read_text(encoding="utf-8")
     except OSError:
         return
     for line in text.splitlines():
@@ -33,12 +83,13 @@ def _load_plugin_env() -> None:
 _load_plugin_env()
 
 
-def hermes_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-
-
 def cache_file() -> Path:
-    return hermes_home() / "data" / "qbittorrent-manager" / "search_cache.json"
+    return data_dir() / "search_cache.json"
+
+
+def _legacy_cache_file() -> Path:
+    """Pre-profile-resolution cache location (root ``HERMES_HOME`` tree)."""
+    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")) / "data" / "qbittorrent-manager" / "search_cache.json"
 
 
 def qb_url() -> str:
@@ -105,6 +156,10 @@ def save_cache(torrents: list[dict[str, Any]]) -> None:
 
 def load_cache() -> list[dict[str, Any]]:
     path = cache_file()
+    if not path.exists():
+        legacy = _legacy_cache_file()
+        if legacy != path and legacy.exists():
+            path = legacy
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))

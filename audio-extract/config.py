@@ -106,18 +106,42 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+def _load_user_config(cfg: dict[str, Any]) -> None:
+    """Overlay the user's ``config.json`` onto ``cfg`` (mutated in place).
+
+    Canonical location: ``DATA_DIR / "config.json"`` — the profile's data tree
+    survives plugin reinstalls; the plugin directory does not. A legacy
+    ``config.json`` in the plugin directory is still read when the data-dir
+    file is absent, and is copied into the data dir so a future reinstall
+    cannot take it away.
+    """
+    data_cfg_path = DATA_DIR / "config.json"
+    legacy_cfg_path = PLUGIN_DIR / "config.json"
+    source = data_cfg_path if data_cfg_path.is_file() else legacy_cfg_path
+    if not source.is_file():
+        return
+    try:
+        with open(source, "r", encoding="utf-8-sig") as f:
+            cfg.update(json.load(f))
+    except Exception as e:
+        logger.warning("Failed to load plugin config from %s: %s", source, e)
+        return
+    if source == legacy_cfg_path:
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            data_cfg_path.write_bytes(legacy_cfg_path.read_bytes())
+            logger.info("Migrated audio-extract config to %s", data_cfg_path)
+        except Exception as e:
+            logger.warning("Failed to migrate plugin config to %s: %s", data_cfg_path, e)
+
+
 def load_config(ctx: Any = None) -> dict[str, Any]:
     """Load configuration with cascaded fallbacks."""
     cfg = DEFAULT_CONFIG.copy()
 
-    # 1. Plugin own config file (preferred over legacy skill config)
-    plugin_cfg_path = PLUGIN_DIR / "config.json"
-    if plugin_cfg_path.is_file():
-        try:
-            with open(plugin_cfg_path, "r", encoding="utf-8-sig") as f:
-                cfg.update(json.load(f))
-        except Exception as e:
-            logger.warning("Failed to load plugin config from %s: %s", plugin_cfg_path, e)
+    # 1. User config file in the profile data dir (legacy plugin-dir copy is
+    #    still honoured and migrated on first load).
+    _load_user_config(cfg)
 
     # 2. Context overrides if provided by Hermes plugin manager
     if ctx is not None and hasattr(ctx, "get_config"):

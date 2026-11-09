@@ -1,5 +1,5 @@
 name: qbittorrent-manager
-version: "1.0.0"
+version: "1.0.1"
 description: "Manage qBittorrent torrents, tags and RSS rules from Hermes."
 author: foreveruand
 manifest_version: 2

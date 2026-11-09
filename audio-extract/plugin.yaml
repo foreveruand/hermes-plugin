@@ -1,5 +1,5 @@
 name: audio-extract
-version: "1.2.0"
+version: "1.2.1"
 description: "Lossless video clipping, Whisper audio extraction, and subtitle sync for Hermes Agent."
 author: "custom"
 provides_tools:
