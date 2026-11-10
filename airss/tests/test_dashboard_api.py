@@ -140,7 +140,9 @@ def _make_db(path: Path) -> None:
             3, 1, 1, 0, 0, '2026-11-10T10:00:00+00:00'
         );
         INSERT INTO articles (subscription_id, title, link)
-            VALUES (2, '文章', 'https://example.com/a');
+            VALUES (2, '已推送文章', 'https://example.com/a'),
+                   (2, '未推送文章', 'https://example.com/b');
+        INSERT INTO article_sent (article_id, subscriber_id) VALUES (1, 10);
         INSERT INTO board_config (key, value) VALUES ('summary_prompt', 'global prompt');
         """
     )
@@ -175,6 +177,28 @@ def test_meta_returns_full_subscription_config(api, tmp_path):
     assert sub["ai_summary_enabled"] is True
     assert sub["enable_proxy"] is True
     assert sub["last_fetch"] == "2026-11-10T10:00:00+00:00"
+
+
+def test_pushed_article_is_read_on_board(api, tmp_path):
+    db = tmp_path / "rss.db"
+    _make_db(db)
+    api._db_path = lambda: db
+
+    meta = api.board_meta()
+    assert meta["counts"]["total"] == 2
+    assert meta["counts"]["unread"] == 1
+    assert meta["subscriptions"][0]["unread"] == 1
+
+    unread = api.board_items(view="unread")
+    assert [item["title"] for item in unread["items"]] == ["未推送文章"]
+
+    pushed = api.board_item_detail(1)
+    assert pushed["delivered"] is True
+    assert pushed["read"] is True
+
+    unsent = api.board_item_detail(2)
+    assert unsent["delivered"] is False
+    assert unsent["read"] is False
 
 
 def test_summary_uses_same_config_and_global_prompt(api, tmp_path):

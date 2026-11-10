@@ -369,7 +369,8 @@ _ITEM_COLUMNS = """
     a.fetched_at, a.is_sent, a.ai_filter_result,
     s.name AS subscription_name, s.source_group_id AS group_id,
     bs.read_at AS board_read_at, bs.feedback AS board_feedback,
-    bs.starred AS board_starred
+    bs.starred AS board_starred,
+    EXISTS(SELECT 1 FROM article_sent _sent WHERE _sent.article_id = a.id) AS delivered
 """
 
 _YT_ID_PATTERNS = (
@@ -425,8 +426,12 @@ def _row_to_item(row: sqlite3.Row, image_urls: list) -> dict:
         "image": image,
         "has_content": bool(row["has_content"]) if "has_content" in keys else False,
         "is_sent": bool(row["is_sent"]),
+        "delivered": bool(row["delivered"]) if "delivered" in keys else False,
         "ai_filter_result": row["ai_filter_result"],
-        "read": row["board_read_at"] is not None,
+        # 推送成功过（article_sent 有任一接收端记录）也算已读；
+        # 展板自己的 read_at 只是站内阅读状态，两者取并集。
+        "read": (row["board_read_at"] is not None)
+        or (bool(row["delivered"]) if "delivered" in keys else False),
         "feedback": row["board_feedback"] if row["board_feedback"] is not None else 0,
         "starred": bool(row["board_starred"]) if "board_starred" in keys and row["board_starred"] is not None else False,
     }
@@ -436,6 +441,9 @@ def _filter_clauses(view, group_id, subscription_id, q):
     clauses, params = [], []
     if view == "unread":
         clauses.append("bs.read_at IS NULL")
+        clauses.append(
+            "NOT EXISTS (SELECT 1 FROM article_sent _sent WHERE _sent.article_id = a.id)"
+        )
     elif view == "starred":
         clauses.append("bs.starred = 1")
     elif view == "filtered":
@@ -474,7 +482,8 @@ def board_meta():
         unread = conn.execute(
             "SELECT COUNT(*) FROM articles a "
             "LEFT JOIN board_state bs ON bs.article_id = a.id "
-            "WHERE bs.read_at IS NULL"
+            "WHERE bs.read_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM article_sent _sent WHERE _sent.article_id = a.id)"
         ).fetchone()[0]
         starred = conn.execute(
             "SELECT COUNT(*) FROM board_state WHERE starred = 1"
@@ -487,7 +496,9 @@ def board_meta():
             for r in conn.execute(
                 "SELECT a.subscription_id, COUNT(*) FROM articles a "
                 "LEFT JOIN board_state bs ON bs.article_id = a.id "
-                "WHERE bs.read_at IS NULL GROUP BY a.subscription_id"
+                "WHERE bs.read_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM article_sent _sent WHERE _sent.article_id = a.id) "
+                "GROUP BY a.subscription_id"
             )
         }
         unread_by_group = {
@@ -496,7 +507,9 @@ def board_meta():
                 "SELECT s.source_group_id, COUNT(*) FROM articles a "
                 "JOIN subscriptions s ON s.id = a.subscription_id "
                 "LEFT JOIN board_state bs ON bs.article_id = a.id "
-                "WHERE bs.read_at IS NULL GROUP BY s.source_group_id"
+                "WHERE bs.read_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM article_sent _sent WHERE _sent.article_id = a.id) "
+                "GROUP BY s.source_group_id"
             )
         }
         groups = []

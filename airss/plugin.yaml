@@ -1,5 +1,5 @@
 name: airss
-version: "1.1.0"
+version: "1.1.1"
 description: "RSS subscription, fetching, AI digest generation and multi-platform notification for Hermes Agent."
 author: "custom"
 provides_tools:

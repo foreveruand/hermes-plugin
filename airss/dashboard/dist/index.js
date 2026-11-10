@@ -41,20 +41,34 @@
     });
   }
 
+  function withProfileFallback(path) {
+    // SDK.fetchJSON 会按管理 profile 自动追加 ?profile=；没有 SDK 时至少
+    // 用后端注入的 serving profile，避免写请求落到 default profile 被
+    // 插件门禁回 404 "Plugin not found"。
+    if (SDK.fetchJSON) return path;
+    var p = typeof window !== "undefined" ? (window.__HERMES_DASHBOARD_PROFILE__ || "") : "";
+    if (!p || path.indexOf("profile=") >= 0) return path;
+    return path + (path.indexOf("?") >= 0 ? "&" : "?") + "profile=" + encodeURIComponent(p);
+  }
+
   function fetchJSON(path) {
     if (SDK.fetchJSON) return SDK.fetchJSON(path);
-    return fetch(path).then(function (r) {
+    return fetch(withProfileFallback(path)).then(function (r) {
       if (!r.ok) return httpError(r);
       return r.json();
     });
   }
 
   function requestJSON(method, path, body) {
-    return fetch(path, {
+    var init = {
       method: method,
       headers: { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body || {}),
-    }).then(function (r) {
+    };
+    if (body !== undefined) init.body = JSON.stringify(body || {});
+    // 写请求必须走 SDK.fetchJSON：它负责附加 ?profile=<当前 profile> 和
+    // 会话 token。直接 fetch 在多 profile 下会被门禁判成 Plugin not found。
+    if (SDK.fetchJSON) return SDK.fetchJSON(path, init);
+    return fetch(withProfileFallback(path), init).then(function (r) {
       if (!r.ok) return httpError(r);
       return r.json();
     });
