@@ -10,7 +10,7 @@ author: foreveruand
 version: 1.0.0
 plugins:
   - repo: foreveruand/hermes-plugin
-    ref: 310b72862c02e707e53fc84b53ab6ddda524748f
+    ref: d6127d39863cd4fb68f9b461a35774e49838100b
     subdir: airss
   - repo: foreveruand/hermes-plugin
     ref: 310b72862c02e707e53fc84b53ab6ddda524748f
