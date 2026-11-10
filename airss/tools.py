@@ -195,6 +195,7 @@ class AirssToolHandlers:
                         "interval": s.interval,
                         "group_id": s.source_group_id,
                         "stop": s.stop,
+                        "ai_summary_enabled": s.ai_summary_enabled,
                         "error_count": s.error_count,
                         "last_fetch": s.last_fetch.isoformat() if s.last_fetch else None,
                     }
@@ -424,10 +425,16 @@ class AirssToolHandlers:
                 "recipients": recipient_count,
             }
 
-        # Preview mode
+        # Preview mode：只算启用了总结的订阅（与定时总结的收集口径一致）
         subs = await self.db.get_subscriptions_by_group(group_id)
+        enabled_subs = [s for s in subs if s.ai_summary_enabled]
+        if subs and not enabled_subs:
+            return {
+                "success": True,
+                "digest": "该分组下没有启用 AI 总结的订阅，请先在展板「订阅源」里为订阅打开总结开关。",
+            }
         all_articles = []
-        for s in subs:
+        for s in enabled_subs:
             if s.id:
                 arts = await self.db.get_recent_articles(subscription_id=s.id, limit=10)
                 all_articles.extend(arts)

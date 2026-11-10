@@ -333,7 +333,12 @@ class RSSScheduler:
         group = await self.db.get_group(sub.source_group_id)
         is_digest_group = group and len(group.schedules) > 0
 
-        if is_digest_group or not sub.id:
+        if not sub.id:
+            return 0
+        # 分组总结的订阅级开关（ai_summary_enabled，展板「订阅源/总结」面板可改）：
+        # 开 = 文章留给分组定时总结、不逐条推送；关 = 即使所在分组有总结
+        # 排期，也照常逐条推送（这正是该字段原本的语义，此前未被执行）。
+        if is_digest_group and sub.ai_summary_enabled:
             return 0
 
         subscribers = await self.db.get_subscribers(sub.id)
@@ -624,7 +629,9 @@ class RSSScheduler:
         umo_to_subscribers: Dict[str, List[Subscriber]] = {}
 
         for sub in subscriptions:
-            if sub.id is None:
+            # 只汇总启用了总结的订阅；未启用的订阅走逐条推送路径，
+            # 它们的文章不进分组总结（ai_summary_enabled 的既定语义）。
+            if sub.id is None or not sub.ai_summary_enabled:
                 continue
             for subscriber in await self.db.get_subscribers(sub.id):
                 umo_to_subscribers.setdefault(subscriber.umo, []).append(subscriber)

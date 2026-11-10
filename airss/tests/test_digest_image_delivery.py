@@ -19,8 +19,13 @@ async def _build_group(tmp_path, umo):
     group = RSSGroup(name="科技", schedules=["08:00"])
     group_id = await db.add_group(group)
 
+    # ai_summary_enabled=True：该订阅参与分组总结（未启用的订阅不进总结，
+    # 走逐条推送，见 scheduler._collect_digest_targets 的口径）。
     sub = RSSSubscription(
-        name="Feed", url="https://example.com/rss.xml", source_group_id=group_id
+        name="Feed",
+        url="https://example.com/rss.xml",
+        source_group_id=group_id,
+        ai_summary_enabled=True,
     )
     sub_id = await db.add_subscription(sub)
 

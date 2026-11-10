@@ -57,9 +57,28 @@ class DigestService:
     def _get_ai_config(self) -> dict:
         return self.config.ai_config
 
-    async def _get_group_system_prompt(self, group_id: int) -> str:
+    async def _get_custom_prompt(self, group_id: int) -> str:
+        """总结提示词的自定义值，优先级：分组覆盖 > 展板面板全局设置。
+
+        分组覆盖是 groups.persona_prompt（原有功能）；面板全局设置是
+        board_config 的 'summary_prompt'，由两个展板（Hermes airss 展板 /
+        Muse RSS 展板）的「总结」面板写入。都没有时返回空串，用内置默认。
+        """
         group = await self.db.get_group(group_id)
         persona = (group.persona_prompt or "").strip() if group else ""
+        if persona:
+            return persona
+        if self.db is not None:
+            try:
+                board_prompt = await self.db.get_board_config("summary_prompt")
+            except Exception:
+                board_prompt = None
+            if board_prompt and board_prompt.strip():
+                return board_prompt.strip()
+        return ""
+
+    async def _get_group_system_prompt(self, group_id: int) -> str:
+        persona = await self._get_custom_prompt(group_id)
         if not persona:
             return DEFAULT_SYSTEM_PROMPT
         if PURE_INDUCTION_SUFFIX.strip() in persona:

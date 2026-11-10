@@ -50,8 +50,39 @@ class Database:
         if self._initialized:
             return
         conn = await self._get_conn()
+        # Board-owned tables (展板专用)：board_state 存已读/收藏/反馈，
+        # board_config 存展板面板设置（如全局总结提示词）。两个进程
+        # （airss 本体与 dashboard 展板）都会懒建，互不依赖对方先跑。
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS board_state (
+                article_id INTEGER PRIMARY KEY,
+                read_at TEXT,
+                feedback INTEGER NOT NULL DEFAULT 0,
+                starred INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS board_config (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
+        await conn.commit()
         cursor = await conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='subscriptions'")
         if await cursor.fetchone():
+            # 老库迁移：board_state 早期版本没有 starred 列
+            cursor = await conn.execute(
+                "SELECT name FROM pragma_table_info('board_state') WHERE name = 'starred'"
+            )
+            if not await cursor.fetchone():
+                await conn.execute(
+                    "ALTER TABLE board_state ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"
+                )
+                await conn.commit()
             self._initialized = True
             return
         await conn.executescript(
@@ -637,6 +668,33 @@ class Database:
             )
             rows = await cursor.fetchall()
             return [self._row_to_sub(row) for row in rows]
+
+    # ==================== Board Config Operations ====================
+    # 展板面板设置（key/value）。总结提示词的全局值存 key='summary_prompt'，
+    # 由 dashboard 展板写入、DigestService 读取；分组级覆盖仍用 groups.persona_prompt。
+
+    async def get_board_config(self, key: str) -> Optional[str]:
+        async with self._acquire() as conn:
+            try:
+                cursor = await conn.execute(
+                    "SELECT value FROM board_config WHERE key = ?", (key,)
+                )
+                row = await cursor.fetchone()
+            except Exception:
+                return None
+            return row["value"] if row else None
+
+    async def set_board_config(self, key: str, value: Optional[str]) -> None:
+        async with self._acquire() as conn:
+            if value is None:
+                await conn.execute("DELETE FROM board_config WHERE key = ?", (key,))
+            else:
+                await conn.execute(
+                    "INSERT INTO board_config (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
+            await conn.commit()
 
     # ==================== AI Filter Cache Operations ====================
 
