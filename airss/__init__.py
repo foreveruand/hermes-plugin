@@ -20,6 +20,21 @@ from .tools import register_all_tools
 logger = logging.getLogger("airss")
 
 
+def _profile_dir() -> Path:
+    """当前插件所属 profile：<profile>/plugins/airss/__init__.py。
+
+    gateway 多 profile 进程里的 HERMES_HOME 可能指向 Hermes 根目录，
+    所以优先按安装位置推断，失败再回退环境变量与 ~/.hermes。
+    """
+    plugin_dir = Path(__file__).absolute().parent
+    if plugin_dir.parent.name == "plugins":
+        return plugin_dir.parent.parent
+    hermes_home = os.environ.get("HERMES_HOME")
+    if hermes_home:
+        return Path(hermes_home)
+    return Path.home() / ".hermes"
+
+
 def register(ctx) -> None:
     """Plugin registration hook invoked by Hermes plugin manager."""
     cfg_data = {}
@@ -37,8 +52,7 @@ def register(ctx) -> None:
                 cfg_data[section] = val
     config = AIRSSConfig.from_dict(cfg_data)
 
-    hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-    data_dir = hermes_home / "data" / "airss"
+    data_dir = _profile_dir() / "data" / "airss"
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "rss.db"
 

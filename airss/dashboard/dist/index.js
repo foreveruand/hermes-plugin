@@ -28,28 +28,93 @@
   var PAGE_SIZE = 50;
   var BOTTOM_DWELL_MS = 2500;
 
+  function httpError(res) {
+    return res.text().then(function (text) {
+      var msg = text;
+      try {
+        var data = JSON.parse(text);
+        msg = data.detail || data.error || text;
+      } catch (e) {}
+      var err = new Error(msg || ("HTTP " + res.status));
+      err.status = res.status;
+      throw err;
+    });
+  }
+
   function fetchJSON(path) {
     if (SDK.fetchJSON) return SDK.fetchJSON(path);
     return fetch(path).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) return httpError(r);
+      return r.json();
+    });
+  }
+
+  function requestJSON(method, path, body) {
+    return fetch(path, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body || {}),
+    }).then(function (r) {
+      if (!r.ok) return httpError(r);
       return r.json();
     });
   }
 
   function postJSON(path, body) {
-    return fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {}),
-    }).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    });
+    return requestJSON("POST", path, body);
   }
 
   function fmtTime(item) {
     var t = item.published_at || item.fetched_at || "";
     return String(t).replace("T", " ").slice(0, 16);
+  }
+
+  function fmtDateValue(value) {
+    if (!value) return "";
+    return String(value).replace("T", " ").slice(0, 16);
+  }
+
+  function fmtInterval(value) {
+    var n = Number(value);
+    if (!isFinite(n) || n <= 0) return "未设置";
+    return n + " 分钟";
+  }
+
+  function subGroupName(groups, id) {
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === id) return groups[i].name;
+    }
+    return "分组 " + id;
+  }
+
+  function configError(res) {
+    if (!res || res.ok) return "";
+    return res.error || res.detail || "请求失败";
+  }
+
+  function emptySubDraft() {
+    return {
+      name: "", url: "", interval: 5, source_group_id: 1,
+      cookies: "", black_keyword: "", content_to_remove: "",
+      max_image_number: 0, ai_summary_enabled: false,
+      enable_proxy: false, stop: false,
+    };
+  }
+
+  function draftFromSub(sub) {
+    return {
+      name: sub.name || "",
+      url: sub.url || "",
+      interval: sub.interval == null ? 5 : sub.interval,
+      source_group_id: sub.group_id || sub.source_group_id || 1,
+      cookies: sub.cookies || "",
+      black_keyword: sub.black_keyword || "",
+      content_to_remove: sub.content_to_remove || "",
+      max_image_number: sub.max_image_number || 0,
+      ai_summary_enabled: !!sub.ai_summary_enabled,
+      enable_proxy: !!sub.enable_proxy,
+      stop: !!sub.stop,
+    };
   }
 
   function copyText(text) {
@@ -154,6 +219,25 @@
       marginBottom: 14, display: "flex", flexDirection: "column", gap: 8,
     },
     note: { fontSize: 12, opacity: 0.7, lineHeight: 1.6 },
+    formGrid: {
+      display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+      marginTop: 10,
+    },
+    field: { display: "flex", flexDirection: "column", gap: 4 },
+    label: { fontSize: 12, opacity: 0.75 },
+    fieldWide: { gridColumn: "1 / -1" },
+    dangerBtn: {
+      padding: "5px 12px", borderRadius: 8, fontSize: 13, cursor: "pointer",
+      border: "1px solid rgba(200,60,60,.65)", color: "#e46a6a", background: "transparent",
+    },
+    notice: {
+      padding: "8px 10px", borderRadius: 8, fontSize: 13,
+      border: "1px solid rgba(200,140,0,.45)", background: "rgba(200,140,0,.12)",
+    },
+    okNotice: {
+      padding: "8px 10px", borderRadius: 8, fontSize: 13,
+      border: "1px solid rgba(60,160,80,.45)", background: "rgba(60,160,80,.12)",
+    },
   };
 
   function BoardPage() {
@@ -202,6 +286,32 @@
     var summary = sumState[0], setSummary = sumState[1];
     var sumLoadState = useState(false);
     var sumLoading = sumLoadState[0], setSumLoading = sumLoadState[1];
+    var sumErrState = useState("");
+    var sumErr = sumErrState[0], setSumErr = sumErrState[1];
+
+    /* ---- 订阅配置编辑状态 ---- */
+    var editIdState = useState(null);
+    var editId = editIdState[0], setEditId = editIdState[1];
+    var draftState = useState(null);
+    var draft = draftState[0], setDraft = draftState[1];
+    var addingState = useState(false);
+    var adding = addingState[0], setAdding = addingState[1];
+    var newDraftState = useState(emptySubDraft());
+    var newDraft = newDraftState[0], setNewDraft = newDraftState[1];
+    var saveBusyState = useState(false);
+    var saveBusy = saveBusyState[0], setSaveBusy = saveBusyState[1];
+    var msgState = useState(null); // { kind: "ok"|"err", text: string }
+    var msg = msgState[0], setMsg = msgState[1];
+
+    /* ---- 分组编辑状态 ---- */
+    var groupEditState = useState(null);
+    var groupEdit = groupEditState[0], setGroupEdit = groupEditState[1];
+    var groupNameState = useState("");
+    var groupName = groupNameState[0], setGroupName = groupNameState[1];
+    var groupAddState = useState(false);
+    var groupAdd = groupAddState[0], setGroupAdd = groupAddState[1];
+    var groupNewState = useState("");
+    var groupNew = groupNewState[0], setGroupNew = groupNewState[1];
 
     // 给观察器用的可变引用盒（避免闭包抓到旧 state）
     var refBox = useState(function () { return { current: {} }; })[0];
@@ -218,17 +328,38 @@
             setCounts(d.counts || { total: 0, unread: 0, starred: 0, filtered: 0 });
             setGroups(d.groups || []);
             setSubs(d.subscriptions || []);
+            setMsg(function (m) { return m && m.kind === "err" ? null : m; });
+          } else if (d.error) {
+            setMsg({ kind: "err", text: d.error });
           }
         })
-        .catch(function () { setAvailable(false); });
+        .catch(function (e) {
+          setAvailable(false);
+          setMsg({ kind: "err", text: "读取订阅配置失败：" + (e && e.message ? e.message : e) });
+        });
     }
 
     function loadSummary() {
       setSumLoading(true);
+      setSumErr("");
       return fetchJSON(API + "/board/summary")
-        .then(function (d) { setSummary(d); if (d) setAvailable(!!d.available); })
-        .catch(function () {})
+        .then(function (d) {
+          setSummary(d || null);
+          if (d) setAvailable(!!d.available);
+          if (!d || !d.available) {
+            setSumErr((d && (d.error || d.detail)) || "总结配置暂时读不到");
+          }
+          // 总结接口同时返回全部订阅，和订阅源页共用同一份状态，避免开关不一致。
+          if (d && d.available && Array.isArray(d.subscriptions)) setSubs(d.subscriptions);
+        })
+        .catch(function (e) {
+          setSumErr("读取总结配置失败：" + (e && e.message ? e.message : e));
+        })
         .then(function () { setSumLoading(false); });
+    }
+
+    function refreshConfig() {
+      return Promise.all([loadMeta(), loadSummary()]).catch(function () {});
     }
 
     var loadItems = useCallback(function (reset, off) {
@@ -410,7 +541,7 @@
 
     function onRefresh() { loadMeta(); loadItems(true); }
 
-    /* ---- 订阅配置开关（订阅源 / 总结 两页共用） ---- */
+    /* ---- 订阅配置（订阅源 / 总结 两页共用同一份状态） ---- */
     function patchSub(id, patch) {
       setSubs(function (prev) {
         return prev.map(function (s) {
@@ -418,33 +549,173 @@
         });
       });
       setSummary(function (prev) {
-        if (!prev || !prev.groups) return prev;
-        return Object.assign({}, prev, {
-          groups: prev.groups.map(function (g) {
+        if (!prev) return prev;
+        var next = Object.assign({}, prev);
+        if (Array.isArray(prev.subscriptions)) {
+          next.subscriptions = prev.subscriptions.map(function (s) {
+            return s.id === id ? Object.assign({}, s, patch) : s;
+          });
+        }
+        if (prev.groups) {
+          next.groups = prev.groups.map(function (g) {
             return Object.assign({}, g, {
               subscriptions: (g.subscriptions || []).map(function (s) {
                 return s.id === id ? Object.assign({}, s, patch) : s;
               }),
             });
-          }),
-        });
+          });
+        }
+        return next;
       });
     }
+
+    function applySub(sub) {
+      if (!sub || !sub.id) return;
+      patchSub(sub.id, sub);
+    }
+
+    function configMessage(text) { setMsg({ kind: "err", text: text }); }
+    function okMessage(text) { setMsg({ kind: "ok", text: text }); }
 
     function onToggleSummary(sub, ev) {
       if (ev) ev.stopPropagation();
       var next = !sub.ai_summary_enabled;
+      setMsg(null);
       postJSON(API + "/board/subscriptions/" + sub.id + "/summary", { enabled: next })
-        .then(function () { patchSub(sub.id, { ai_summary_enabled: next }); })
-        .catch(function () {});
+        .then(function () {
+          patchSub(sub.id, { ai_summary_enabled: next });
+          okMessage((next ? "已启用" : "已关闭") + "「" + (sub.name || "订阅") + "」的总结聚合");
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("保存总结开关失败：" + e.message); });
     }
 
     function onToggleStop(sub, ev) {
       if (ev) ev.stopPropagation();
       var next = !sub.stop;
+      setMsg(null);
       postJSON(API + "/board/subscriptions/" + sub.id + "/stop", { stopped: next })
-        .then(function () { patchSub(sub.id, { stop: next }); })
-        .catch(function () {});
+        .then(function () {
+          patchSub(sub.id, { stop: next });
+          okMessage((next ? "已暂停" : "已恢复") + "「" + (sub.name || "订阅") + "」抓取");
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("保存抓取开关失败：" + e.message); });
+    }
+
+    function onToggleField(sub, key, ev) {
+      if (ev) ev.stopPropagation();
+      var next = !sub[key];
+      var body = {};
+      body[key] = next;
+      setMsg(null);
+      requestJSON("PATCH", API + "/board/subscriptions/" + sub.id, body)
+        .then(function (d) {
+          applySub(d.subscription);
+          okMessage("已更新「" + (sub.name || "订阅") + "」的 " + key);
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("保存设置失败：" + e.message); });
+    }
+
+    function beginEditSub(sub) {
+      setEditId(sub.id);
+      setDraft(draftFromSub(sub));
+      setAdding(false);
+      setMsg(null);
+    }
+
+    function closeEditor() {
+      setEditId(null);
+      setDraft(null);
+      setAdding(false);
+      setNewDraft(emptySubDraft());
+    }
+
+    function setDraftField(key, value) {
+      setDraft(function (prev) { return Object.assign({}, prev, { [key]: value }); });
+    }
+
+    function subPayload(d) {
+      return {
+        name: String(d.name || "").trim(),
+        url: String(d.url || "").trim(),
+        interval: parseInt(d.interval, 10) || 5,
+        source_group_id: parseInt(d.source_group_id, 10) || 1,
+        cookies: String(d.cookies || ""),
+        black_keyword: String(d.black_keyword || ""),
+        content_to_remove: String(d.content_to_remove || ""),
+        max_image_number: parseInt(d.max_image_number, 10) || 0,
+        ai_summary_enabled: !!d.ai_summary_enabled,
+        enable_proxy: !!d.enable_proxy,
+        stop: !!d.stop,
+      };
+    }
+
+    function saveSub() {
+      if (!draft) return;
+      var payload = subPayload(draft);
+      if (!payload.name || !payload.url) {
+        configMessage("名称和 URL 不能为空");
+        return;
+      }
+      setSaveBusy(true);
+      setMsg(null);
+      requestJSON("PATCH", API + "/board/subscriptions/" + editId, payload)
+        .then(function (d) {
+          applySub(d.subscription);
+          okMessage("已保存「" + payload.name + "」的订阅设置");
+          closeEditor();
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("保存失败：" + e.message); })
+        .then(function () { setSaveBusy(false); });
+    }
+
+    function deleteSub(sub) {
+      var ok = window.confirm(
+        "确定删除订阅「" + (sub.name || sub.url) + "」？\n" +
+        "会同时删除该订阅的文章、接收端与展板已读/收藏记录，且无法恢复。"
+      );
+      if (!ok) return;
+      setMsg(null);
+      requestJSON("DELETE", API + "/board/subscriptions/" + sub.id)
+        .then(function (d) {
+          okMessage("已删除「" + (sub.name || sub.url) + "」，清理 " + (d.deleted_articles || 0) + " 篇文章");
+          if (editId === sub.id) closeEditor();
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("删除失败：" + e.message); });
+    }
+
+    function beginAdd() {
+      var d = emptySubDraft();
+      if (groups.length) d.source_group_id = groups[0].id;
+      setNewDraft(d);
+      setAdding(true);
+      setEditId(null);
+      setDraft(null);
+      setMsg(null);
+    }
+
+    function saveNewSub() {
+      var payload = subPayload(newDraft);
+      if (!payload.name || !payload.url) {
+        configMessage("名称和 URL 不能为空");
+        return;
+      }
+      setSaveBusy(true);
+      setMsg(null);
+      postJSON(API + "/board/subscriptions", payload)
+        .then(function (d) {
+          okMessage("已添加订阅「" + payload.name + "」");
+          setAdding(false);
+          setNewDraft(emptySubDraft());
+          if (d.subscription) applySub(d.subscription);
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("添加失败：" + e.message); })
+        .then(function () { setSaveBusy(false); });
     }
 
     function switchBtn(on, label, onClick) {
@@ -689,44 +960,171 @@
     }
 
     /* ---- 订阅源页 ---- */
-    function renderSubsTab() {
-      var groupName = {};
-      groups.forEach(function (g) { groupName[g.id] = g.name; });
-      if (available === false) {
-        return el("div", { style: S.empty }, "airss 数据库还没生成（rss.db 不存在）。");
+    function renderNotice() {
+      if (!msg) return null;
+      return el("div", { style: msg.kind === "ok" ? S.okNotice : S.notice },
+        msg.text,
+        el("button", {
+          style: Object.assign({}, S.btn, { marginLeft: 10, padding: "2px 8px" }),
+          onClick: function () { setMsg(null); },
+        }, "关闭"));
+    }
+
+    function field(label, node, wide) {
+      return el("label", { style: wide ? Object.assign({}, S.field, S.fieldWide) : S.field },
+        el("span", { style: S.label }, label), node);
+    }
+
+    function check(label, checked, onChange) {
+      return el("label", {
+        style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13 },
+      },
+        el("input", { type: "checkbox", checked: !!checked, onChange: onChange }),
+        label
+      );
+    }
+
+    function groupOptions(selected) {
+      var options = groups.map(function (g) {
+        return el("option", { key: g.id, value: String(g.id) }, g.name);
+      });
+      var has = groups.some(function (g) { return g.id === selected; });
+      if (!has && selected) {
+        options.unshift(el("option", { key: "missing", value: String(selected) },
+          "分组 " + selected + "（不存在）"));
       }
-      if (!subs.length) return el("div", { style: S.empty }, "还没有订阅源。");
+      return options;
+    }
+
+    function renderSubEditor(sub, d, isNew) {
+      return el("div", {
+        style: Object.assign({}, S.subRow, {
+          alignItems: "stretch", flexDirection: "column", gap: 10,
+          borderColor: "rgba(80,140,220,.55)",
+        }),
+      },
+        el("div", { style: { fontWeight: 700, fontSize: 14 } },
+          isNew ? "添加订阅" : "编辑订阅 · " + (sub.name || sub.id)),
+        el("div", { style: S.formGrid },
+          field("名称", el("input", {
+            style: S.input, type: "text", value: d.name,
+            onChange: function (e) { setDraftField("name", e.target.value); },
+          })),
+          field("抓取间隔（分钟）", el("input", {
+            style: S.input, type: "number", min: 1, max: 10080, value: d.interval,
+            onChange: function (e) { setDraftField("interval", e.target.value); },
+          })),
+          field("所属分组", el("select", {
+            style: S.input, value: String(d.source_group_id || 1),
+            onChange: function (e) { setDraftField("source_group_id", e.target.value); },
+          }, groupOptions(Number(d.source_group_id || 1)))),
+          field("最大图片数（0 = 不限）", el("input", {
+            style: S.input, type: "number", min: 0, value: d.max_image_number,
+            onChange: function (e) { setDraftField("max_image_number", e.target.value); },
+          })),
+          field("RSS URL", el("input", {
+            style: S.input, type: "text", value: d.url,
+            onChange: function (e) { setDraftField("url", e.target.value); },
+          }), true),
+          field("黑名单关键词", el("input", {
+            style: S.input, type: "text", value: d.black_keyword,
+            placeholder: "与插件 rss_subscription set_config 的 black_keyword 一致",
+            onChange: function (e) { setDraftField("black_keyword", e.target.value); },
+          })),
+          field("内容移除正则", el("input", {
+            style: S.input, type: "text", value: d.content_to_remove,
+            placeholder: "content_to_remove，可留空",
+            onChange: function (e) { setDraftField("content_to_remove", e.target.value); },
+          })),
+          field("Cookies", el("textarea", {
+            style: Object.assign({}, S.textarea, { minHeight: 64, fontFamily: "monospace" }),
+            value: d.cookies, placeholder: "cookies，可留空",
+            onChange: function (e) { setDraftField("cookies", e.target.value); },
+          }), true)
+        ),
+        el("div", { style: { display: "flex", gap: 14, flexWrap: "wrap" } },
+          check("启用总结聚合", d.ai_summary_enabled, function (e) {
+            setDraftField("ai_summary_enabled", e.target.checked);
+          }),
+          check("抓取走代理", d.enable_proxy, function (e) {
+            setDraftField("enable_proxy", e.target.checked);
+          }),
+          check("暂停抓取", d.stop, function (e) {
+            setDraftField("stop", e.target.checked);
+          })
+        ),
+        el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+          el("button", {
+            style: S.btn, disabled: saveBusy,
+            onClick: isNew ? saveNewSub : saveSub,
+          }, saveBusy ? "保存中…" : "保存"),
+          el("button", { style: S.btn, onClick: closeEditor }, "取消"),
+          !isNew && sub ? el("button", {
+            style: S.dangerBtn, onClick: function () { deleteSub(sub); },
+          }, "删除订阅") : null
+        )
+      );
+    }
+
+    function renderSubsTab() {
+      if (available === false) {
+        return el("div", { style: S.empty },
+          (msg && msg.text) || "airss 数据库还没生成（rss.db 不存在）。");
+      }
+      var running = subs.filter(function (s) { return !s.stop; }).length;
+      var summaryOn = subs.filter(function (s) { return s.ai_summary_enabled; }).length;
+      var header = el("div", { style: Object.assign({}, S.header, { marginBottom: 4 }) },
+        el("span", { style: S.title }, "订阅源设置"),
+        el("span", { style: S.note }, "共 " + subs.length + " 个 · 抓取中 " + running + " · 总结聚合 " + summaryOn),
+        el("button", { style: S.btn, onClick: beginAdd }, "添加订阅"),
+        el("button", { style: S.btn, onClick: refreshConfig }, "刷新")
+      );
       return el("div", null,
+        header,
         el("div", { style: Object.assign({}, S.note, { marginBottom: 10 }) },
-          "总结开关：开 = 该订阅的文章留给所在分组的定时总结，不逐条推送；关 = 逐条推送/直接阅读。" +
-          "总结的排期与提示词在「总结」页里配。暂停开关停掉抓取与推送。"),
-        el("div", { style: S.listWrap }, subs.map(function (s) {
-          return el("div", { key: s.id, style: S.subRow },
-            el("div", { style: { flex: 1, minWidth: 220 } },
-              el("div", { style: { fontWeight: 600, fontSize: 14 } },
-                s.name,
-                s.unread ? el("span", {
-                  style: Object.assign({}, S.unreadBadge, { marginLeft: 8 }),
-                }, "未读 " + s.unread) : null,
-                s.error_count > 0 ? el("span", {
-                  style: Object.assign({}, S.aiBadge, { marginLeft: 8 }),
-                }, "失败 " + s.error_count + " 次") : null
+          "这里的字段与插件 rss_subscription / rss_group 读写同一张 airss 数据库表。" +
+          "总结开 = 文章进入所在分组的定时总结，不逐条推送；抓取关 = 暂停抓取与推送。" +
+          "排期与提示词在「总结」页配置。"),
+        renderNotice(),
+        adding ? el("div", { style: { marginBottom: 12 } },
+          renderSubEditor(null, newDraft, true)) : null,
+        !subs.length && !adding
+          ? el("div", { style: S.empty }, "还没有订阅源，点上方「添加订阅」创建。")
+          : el("div", { style: S.listWrap }, subs.map(function (s) {
+            if (editId === s.id && draft) {
+              return renderSubEditor(s, draft, false);
+            }
+            return el("div", { key: s.id, style: S.subRow },
+              el("div", { style: { flex: 1, minWidth: 240 } },
+                el("div", { style: { fontWeight: 600, fontSize: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+                  el("span", null, s.name || "(未命名)"),
+                  el("span", { style: S.srcBadge }, subGroupName(groups, s.group_id)),
+                  s.stop ? el("span", { style: S.aiBadge }, "已暂停") : null,
+                  s.ai_summary_enabled ? el("span", { style: S.aiBadge }, "总结聚合") : null,
+                  s.enable_proxy ? el("span", { style: S.srcBadge }, "代理") : null,
+                  s.unread ? el("span", { style: S.unreadBadge }, "未读 " + s.unread) : null,
+                  s.error_count > 0 ? el("span", { style: S.aiBadge }, "失败 " + s.error_count + " 次") : null
+                ),
+                el("div", { style: S.note },
+                  "ID " + s.id + " · 每 " + fmtInterval(s.interval) + " · 上次抓取 " +
+                  (fmtDateValue(s.last_fetch) || "还没抓过")),
+                el("div", { style: { fontSize: 11, opacity: 0.5, wordBreak: "break-all" } }, s.url),
+                (s.black_keyword || s.content_to_remove || s.cookies || s.max_image_number)
+                  ? el("div", { style: Object.assign({}, S.note, { fontSize: 11 }) },
+                      (s.black_keyword ? "黑名单：" + s.black_keyword + "　" : "") +
+                      (s.content_to_remove ? "移除正则：" + s.content_to_remove + "　" : "") +
+                      (s.max_image_number ? "图片上限：" + s.max_image_number + "　" : "") +
+                      (s.cookies ? "已配置 Cookies" : ""))
+                  : null
               ),
-              el("div", { style: S.note },
-                (groupName[s.group_id] || "默认分组") + " · 每 " + s.interval + " 分钟 · " +
-                (s.last_fetch ? "上次抓取 " + String(s.last_fetch).replace("T", " ").slice(0, 16) : "还没抓过")),
-              el("div", {
-                style: {
-                  fontSize: 11, opacity: 0.5, wordBreak: "break-all",
-                },
-              }, s.url)
-            ),
-            el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
-              switchBtn(s.ai_summary_enabled, "总结", function (e) { onToggleSummary(s, e); }),
-              switchBtn(!s.stop, "抓取", function (e) { onToggleStop(s, e); })
-            )
-          );
-        }))
+              el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+                switchBtn(s.ai_summary_enabled, "总结", function (e) { onToggleSummary(s, e); }),
+                switchBtn(!s.stop, "抓取", function (e) { onToggleStop(s, e); }),
+                switchBtn(s.enable_proxy, "代理", function (e) { onToggleField(s, "enable_proxy", e); }),
+                el("button", { style: S.btn, onClick: function () { beginEditSub(s); } }, "编辑设置")
+              )
+            );
+          }))
       );
     }
 
@@ -775,20 +1173,94 @@
       );
     }
 
+    function beginAddGroup() {
+      setGroupAdd(true);
+      setGroupNew("");
+      setGroupEdit(null);
+      setMsg(null);
+    }
+
+    function saveNewGroup() {
+      var name = String(groupNew || "").trim();
+      if (!name) { configMessage("分组名称不能为空"); return; }
+      setMsg(null);
+      postJSON(API + "/board/groups", { name: name, schedules: [] })
+        .then(function () {
+          okMessage("已添加分组「" + name + "」");
+          setGroupAdd(false);
+          setGroupNew("");
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("添加分组失败：" + e.message); });
+    }
+
+    function beginRenameGroup(g) {
+      setGroupEdit(g.id);
+      setGroupName(g.name || "");
+      setMsg(null);
+    }
+
+    function saveGroupName(g) {
+      var name = String(groupName || "").trim();
+      if (!name) { configMessage("分组名称不能为空"); return; }
+      requestJSON("PATCH", API + "/board/groups/" + g.id, { name: name })
+        .then(function () {
+          okMessage("已重命名分组为「" + name + "」");
+          setGroupEdit(null);
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("重命名失败：" + e.message); });
+    }
+
+    function deleteGroup(g) {
+      if (!window.confirm("确定删除分组「" + g.name + "」？只有空分组可以删除。")) return;
+      requestJSON("DELETE", API + "/board/groups/" + g.id)
+        .then(function () {
+          okMessage("已删除分组「" + g.name + "」");
+          setGroupEdit(null);
+          refreshConfig();
+        })
+        .catch(function (e) { configMessage("删除分组失败：" + e.message); });
+    }
+
     function renderSummaryTab() {
       if (available === false) {
-        return el("div", { style: S.empty }, "airss 数据库还没生成（rss.db 不存在）。");
+        return el("div", { style: S.empty },
+          (summary && summary.error) || (msg && msg.text) || "airss 数据库还没生成（rss.db 不存在）。");
       }
       if (sumLoading && !summary) return el("div", { style: S.empty }, "加载中…");
       if (!summary || !summary.available) {
-        return el("div", { style: S.empty }, "总结配置暂时读不到，稍后刷新重试。");
+        return el("div", { style: S.empty },
+          el("div", null, sumErr || "总结配置暂时读不到，稍后刷新重试。"),
+          el("div", { style: { marginTop: 10 } },
+            el("button", { style: S.btn, onClick: refreshConfig }, "重新加载")
+          ));
       }
       var sourceLabel = { group: "本分组自定义", global: "面板全局", default: "内置默认" };
       var kids = [
+        msg ? el("div", { key: "notice", style: { marginBottom: 12 } }, renderNotice()) : null,
+        el("div", { key: "groupbar", style: S.header },
+          el("span", { style: S.title }, "总结与分组"),
+          el("span", { style: S.note }, "分组 " + (summary.groups || []).length + " 个"),
+          el("button", { style: S.btn, onClick: beginAddGroup }, "添加分组"),
+          el("button", { style: S.btn, onClick: refreshConfig }, "刷新")
+        ),
+        groupAdd ? el("div", { key: "addgroup", style: S.groupCard },
+          el("div", { style: { fontWeight: 700 } }, "新建分组"),
+          el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+            el("input", {
+              style: Object.assign({}, S.input, { flex: 1, minWidth: 220 }),
+              value: groupNew, placeholder: "分组名称",
+              onChange: function (e) { setGroupNew(e.target.value); },
+            }),
+            el("button", { style: S.btn, onClick: saveNewGroup }, "创建"),
+            el("button", { style: S.btn, onClick: function () { setGroupAdd(false); } }, "取消")
+          )
+        ) : null,
         el("div", { key: "intro", style: Object.assign({}, S.note, { marginBottom: 12 }) },
           "分组总结沿用 airss 原有机制：分组设了排期时间后，组内「已启用总结」的订阅文章会攒着，" +
           "到点由 AI 按提示词汇总成一份日报推送；未启用的订阅照常逐条推送。" +
-          "提示词优先级：分组自定义 > 面板全局 > 内置默认。订阅的总结开关也可以在「订阅源」页改。"),
+          "提示词优先级：分组自定义 > 面板全局 > 内置默认。订阅的总结/抓取开关与「订阅源」页同源，任一处修改都会同步。"),
         el("div", { key: "global", style: S.groupCard },
           el("div", { style: { fontWeight: 700, fontSize: 15 } }, "面板全局提示词"),
           el("div", { style: S.note }, "对没有分组自定义提示词的分组生效。留空保存 = 清除，回落到内置默认。"),
@@ -834,11 +1306,32 @@
       var schedSavedSt = useState(false);
       var schedSaved = schedSavedSt[0], setSchedSaved = schedSavedSt[1];
       var enabledCount = (g.subscriptions || []).filter(function (s) { return s.ai_summary_enabled; }).length;
+      var subCount = (g.subscriptions || []).length;
+      var nameBlock = groupEdit === g.id
+        ? el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", flex: 1 } },
+            el("input", {
+              style: Object.assign({}, S.input, { flex: 1, minWidth: 180 }),
+              value: groupName,
+              onChange: function (e) { setGroupName(e.target.value); },
+            }),
+            el("button", { style: S.btn, onClick: function () { saveGroupName(g); } }, "保存名称"),
+            el("button", { style: S.btn, onClick: function () { setGroupEdit(null); } }, "取消")
+          )
+        : el("span", { style: { fontWeight: 700, fontSize: 15 } }, g.name);
       return el("div", { style: S.groupCard },
         el("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
-          el("span", { style: { fontWeight: 700, fontSize: 15 } }, g.name),
+          nameBlock,
           el("span", { style: S.srcBadge }, "提示词来源：" + props.sourceLabel[g.prompt_source || "default"]),
-          el("span", { style: S.note }, "已启用总结 " + enabledCount + " / " + (g.subscriptions || []).length + " 个订阅")
+          el("span", { style: S.note }, "已启用总结 " + enabledCount + " / " + subCount + " 个订阅"),
+          groupEdit !== g.id ? el("button", {
+            style: S.btn, onClick: function () { beginRenameGroup(g); },
+          }, "重命名") : null,
+          groupEdit !== g.id ? el("button", {
+            style: subCount ? Object.assign({}, S.btn, { opacity: 0.45, cursor: "not-allowed" }) : S.dangerBtn,
+            disabled: !!subCount,
+            title: subCount ? "分组内还有订阅，先把订阅移到别的分组再删除" : "删除空分组",
+            onClick: function () { if (!subCount) deleteGroup(g); },
+          }, "删除分组") : null
         ),
         el("div", null,
           el("div", { style: Object.assign({}, S.note, { marginBottom: 4 }) },
@@ -889,16 +1382,27 @@
           })
         ),
         (g.subscriptions || []).length ? el("div", null,
-          el("div", { style: Object.assign({}, S.note, { marginBottom: 4 }) }, "组内订阅的总结开关"),
+          el("div", { style: Object.assign({}, S.note, { marginBottom: 4 }) },
+            "组内订阅（总结/抓取开关与「订阅源」页同步）"),
           el("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             (g.subscriptions || []).map(function (s) {
               var full = subs.filter(function (x) { return x.id === s.id; })[0] || s;
               return el("div", {
                 key: s.id,
-                style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
+                style: {
+                  display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+                  padding: "6px 0", borderTop: "1px solid rgba(127,127,127,.16)",
+                },
               },
-                el("span", { style: { fontSize: 13, flex: 1, minWidth: 160 } }, s.name),
-                switchBtn(full.ai_summary_enabled, "总结", function (e) { onToggleSummary(full, e); })
+                el("div", { style: { flex: 1, minWidth: 180 } },
+                  el("div", { style: { fontSize: 13, fontWeight: 600 } }, s.name),
+                  el("div", { style: S.note },
+                    "每 " + fmtInterval(full.interval) + " · 上次抓取 " +
+                    (fmtDateValue(full.last_fetch) || "还没抓过") +
+                    (full.stop ? " · 已暂停" : ""))
+                ),
+                switchBtn(full.ai_summary_enabled, "总结", function (e) { onToggleSummary(full, e); }),
+                switchBtn(!full.stop, "抓取", function (e) { onToggleStop(full, e); })
               );
             }))
         ) : null

@@ -6,7 +6,7 @@
 
 | 插件 | 说明 |
 |---|---|
-| airss | RSS 订阅抓取、AI 分组总结与多平台推送（含 Telegram / Webhook）；订阅级总结开关 `ai_summary_enabled` 决定文章进分组定时总结还是逐条推送，提示词优先级为分组自定义 > 展板全局 > 内置默认；`dashboard/` 是「RSS 展板」仪表盘页签（展板/订阅源/总结三页），数据直接读 airss 本地库，可在面板里改总结开关、分组提示词与排期 |
+| airss | RSS 订阅抓取、AI 分组总结与多平台推送（含 Telegram / Webhook）；订阅级总结开关 `ai_summary_enabled` 决定文章进分组定时总结还是逐条推送，提示词优先级为分组自定义 > 展板全局 > 内置默认；`dashboard/` 是「RSS 展板」仪表盘页签（展板/订阅源/总结三页），数据直接读写 airss 本地库，可查看和修改全部订阅配置（名称、URL、抓取间隔、分组、关键词、Cookies、图片上限、代理、总结/暂停）、分组排期与提示词 |
 | audio-extract | 无损视频切片、Whisper 音频提取与字幕同步 |
 | idle-compaction | 空闲上下文压缩（修复 Issue #79357 的时钟重置问题） |
 | imap-watcher | IMAP IDLE 实时邮件到达提醒，多账号多文件夹单连接复用 |
