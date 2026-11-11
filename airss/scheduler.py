@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import tempfile
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -134,7 +136,11 @@ class RSSScheduler:
             )
             t.start()
             _SCHEDULER_THREAD = t
-            logger.info("AIRSS scheduler worker thread started (gen=%d)", gen)
+            logger.info(
+                "AIRSS scheduler worker thread started (gen=%d, pid=%d)",
+                gen,
+                os.getpid(),
+            )
 
     def _worker_thread_main(self, gen: int, stop_event: threading.Event) -> None:
         try:
@@ -170,7 +176,11 @@ class RSSScheduler:
 
     async def _run_loop(self, gen: int, stop_event: threading.Event) -> None:
         """Periodic loop checking fetches and digest cron schedules."""
-        logger.info("AIRSS scheduler background worker running (gen=%d)", gen)
+        logger.info(
+            "AIRSS scheduler background worker running (gen=%d, pid=%d)",
+            gen,
+            os.getpid(),
+        )
         # On startup: perform an immediate backlog recovery check for unpushed articles (<24h)
         try:
             await self.recover_unpushed_backlogs()
@@ -498,34 +508,85 @@ class RSSScheduler:
             for schedule in group.schedules:
                 run_key = f"{group.id}:{schedule}"
                 if self._last_digest_runs.get(run_key) == time_key:
+                    logger.debug(
+                        "Group digest skipped, already ran in this slot: "
+                        "group=%s(%s) schedule=%s slot=%s",
+                        group.name,
+                        group.id,
+                        schedule,
+                        time_key,
+                    )
                     continue
 
                 if is_schedule_due(schedule, sched_now) and group.id:
                     self._last_digest_runs[run_key] = time_key
+                    logger.info(
+                        "Group digest due: group=%s(%s) schedule=%s slot=%s pid=%d",
+                        group.name,
+                        group.id,
+                        schedule,
+                        time_key,
+                        os.getpid(),
+                    )
                     try:
                         await self.run_group_digest(group.id)
                     except Exception as e:
-                        logger.error(f"Failed to generate digest for group {group.id}: {e}")
+                        logger.error(
+                            "Failed to generate digest for group=%s(%s): %s",
+                            group.name,
+                            group.id,
+                            e,
+                            exc_info=True,
+                        )
 
     async def run_group_digest(self, group_id: int) -> int:
         """Collect unsent articles for all group subscribers, generate digests, and deliver."""
+        started = time.monotonic()
         group = await self.db.get_group(group_id)
         if not group:
+            logger.debug("Group digest skipped: group_id=%s not found", group_id)
             return 0
 
         subscriptions = await self.db.get_subscriptions_by_group(group_id)
         if not subscriptions:
+            logger.debug(
+                "Group digest skipped: group=%s(%s) has no subscriptions",
+                group.name,
+                group_id,
+            )
             return 0
 
         # Collect targets bucketed by visible articles
         recent_days = int(self.config.ai_config.get("ai_digest_recent_days", 0) or 0)
         digest_targets = await self._collect_digest_targets(subscriptions, recent_days)
         if not digest_targets:
+            logger.debug(
+                "Group digest skipped: group=%s(%s) has no unsent articles",
+                group.name,
+                group_id,
+            )
             return 0
 
+        logger.info(
+            "Group digest started: group=%s(%s) pid=%d buckets=%d",
+            group.name,
+            group_id,
+            os.getpid(),
+            len(digest_targets),
+        )
+
         total_recipients = 0
-        for signature, target in digest_targets.items():
+        for bucket_index, (signature, target) in enumerate(digest_targets.items(), 1):
             articles = target["articles"]
+            logger.info(
+                "Group digest generating: group=%s(%s) pid=%d bucket=%d/%d articles=%d",
+                group.name,
+                group_id,
+                os.getpid(),
+                bucket_index,
+                len(digest_targets),
+                len(articles),
+            )
             digest_content, _ = await self.digest_service.generate_digest(
                 articles=articles,
                 group_id=group_id,
@@ -557,6 +618,12 @@ class RSSScheduler:
                     # All sub_records in subscribers share the same UMO.
                     # Send the group digest once to this recipient.
                     primary_sub = subscribers[0]
+                    umo = primary_sub.umo or ""
+                    platform = (
+                        "webhook"
+                        if umo.startswith(("http://", "https://"))
+                        else umo.split(":", 1)[0] or "-"
+                    )
                     ok = False
                     if image_paths:
                         ok = await self.delivery.send_digest_images(
@@ -575,10 +642,36 @@ class RSSScheduler:
                                 sub_record.id, target["article_ids"]
                             )
                         total_recipients += 1
+                        logger.debug(
+                            "Group digest delivered: group=%s(%s) platform=%s "
+                            "subscribers=%d articles=%d",
+                            group.name,
+                            group_id,
+                            platform,
+                            len(subscribers),
+                            len(target["article_ids"]),
+                        )
+                    else:
+                        logger.warning(
+                            "Group digest delivery failed: group=%s(%s) platform=%s articles=%d",
+                            group.name,
+                            group_id,
+                            platform,
+                            len(target["article_ids"]),
+                        )
             finally:
                 if image_paths:
                     shutil.rmtree(image_paths[0].parent, ignore_errors=True)
 
+        logger.info(
+            "Group digest finished: group=%s(%s) pid=%d buckets=%d recipients=%d elapsed=%.1fs",
+            group.name,
+            group_id,
+            os.getpid(),
+            len(digest_targets),
+            total_recipients,
+            time.monotonic() - started,
+        )
         return total_recipients
 
     async def _render_digest_images(
@@ -684,4 +777,9 @@ class RSSScheduler:
             )
             bucket["recipients"].append({"umo": umo, "subscribers": active_subs})
 
+        logger.debug(
+            "Collected digest targets: subscriptions=%d buckets=%d",
+            len(subscriptions),
+            len(digest_targets),
+        )
         return digest_targets

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -33,6 +34,25 @@ def _profile_dir() -> Path:
     if hermes_home:
         return Path(hermes_home)
     return Path.home() / ".hermes"
+
+
+def _is_gateway_process(profile_dir: Path) -> bool:
+    """Return True when this process is the profile gateway or its plugin host child.
+
+    面板/CLI 也会加载插件，但它们只应读写 RSS 数据和配置；抓取与定时总结
+    必须由 gateway 这一条常驻业务进程执行。gateway.lock 记录当前 profile
+    的 gateway pid，插件宿主子进程的父进程也是该 pid。
+    """
+    try:
+        record = json.loads((profile_dir / "gateway.lock").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(record, dict):
+        return False
+    pid = record.get("pid")
+    if record.get("kind") != "hermes-gateway" or not isinstance(pid, int) or pid <= 0:
+        return False
+    return pid == os.getpid() or pid == os.getppid()
 
 
 def register(ctx) -> None:
@@ -99,10 +119,20 @@ def register(ctx) -> None:
             ),
         )
 
-    # Start background scheduler worker thread
-    scheduler.start()
+    # 只有 gateway（或其插件宿主子进程）运行抓取/定时总结；面板和一次性 CLI
+    # 进程只提供工具与 dashboard 路由。
+    if _is_gateway_process(_profile_dir()):
+        scheduler.start()
+        if hasattr(ctx, "on_unload"):
+            ctx.on_unload(lambda: scheduler.stop())
+    else:
+        logger.info(
+            "AIRSS scheduler not started in pid=%d: only the profile gateway runs fetches and digests",
+            os.getpid(),
+        )
 
-    if hasattr(ctx, "on_unload"):
-        ctx.on_unload(lambda: scheduler.stop())
-
-    logger.info("Hermes AIRSS plugin registered successfully")
+    logger.info(
+        "Hermes AIRSS plugin registered successfully (pid=%d, profile=%s)",
+        os.getpid(),
+        _profile_dir(),
+    )

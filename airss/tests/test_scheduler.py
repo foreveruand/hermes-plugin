@@ -89,3 +89,28 @@ async def test_scheduler_fetch_and_delivery(tmp_path):
     assert len(delivered_messages) == 1
 
     await db.close()
+
+
+def test_gateway_process_detection(tmp_path):
+    import json
+    import os
+
+    from plugins.airss import _is_gateway_process
+
+    assert _is_gateway_process(tmp_path) is False
+
+    lock = tmp_path / "gateway.lock"
+    lock.write_text("not json", encoding="utf-8")
+    assert _is_gateway_process(tmp_path) is False
+
+    lock.write_text(json.dumps({"pid": os.getpid(), "kind": "hermes-gateway"}), encoding="utf-8")
+    assert _is_gateway_process(tmp_path) is True
+
+    lock.write_text(json.dumps({"pid": os.getppid(), "kind": "hermes-gateway"}), encoding="utf-8")
+    assert _is_gateway_process(tmp_path) is True
+
+    lock.write_text(json.dumps({"pid": 2147483647, "kind": "hermes-gateway"}), encoding="utf-8")
+    assert _is_gateway_process(tmp_path) is False
+
+    lock.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    assert _is_gateway_process(tmp_path) is False

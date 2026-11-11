@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from typing import Any, Callable, List, Optional, Tuple
 
 from .config import AIRSSConfig
@@ -359,6 +360,12 @@ class DigestService:
         if not articles:
             return "暂无新文章。", 0
 
+        started = time.monotonic()
+        requested = len(articles)
+        logger.debug(
+            "Generating digest: group_id=%s articles=%d", group_id, requested
+        )
+
         ai_config = self._get_ai_config()
         max_articles = int(ai_config.get("ai_digest_max_articles", 50))
         max_input_tokens = int(ai_config.get("ai_digest_max_input_tokens", 131072))
@@ -379,11 +386,31 @@ class DigestService:
             trimmed.pop()
             prompt = self._build_prompt(trimmed)
 
+        if len(trimmed) < requested:
+            # The scheduler marks every collected article as sent after the run,
+            # so anything dropped here is neither summarized nor delivered.
+            logger.warning(
+                "Digest input truncated: group_id=%s requested=%d used=%d "
+                "max_articles=%d max_input_tokens=%d",
+                group_id,
+                requested,
+                len(trimmed),
+                max_articles,
+                max_input_tokens,
+            )
+
         if self._count_tokens(prompt) > max_input_tokens:
             logger.warning("Digest input exceeds token budget=%s, using fallback", max_input_tokens)
             return self._generate_fallback(trimmed, fallback_msg), len(trimmed)
 
         system_prompt = await self._get_group_system_prompt(group_id)
+        logger.debug(
+            "Calling digest LLM: group_id=%s articles=%d prompt_tokens~%d max_output_tokens=%d",
+            group_id,
+            len(trimmed),
+            self._count_tokens(prompt),
+            max_output_tokens,
+        )
 
         try:
             digest, finish_reason = await self._call_llm(
@@ -395,21 +422,39 @@ class DigestService:
             ok, reason = self.validate_digest(cleaned, finish_reason)
             if not ok:
                 logger.warning(
-                    "Digest rejected (%s, finish_reason=%s, chars=%d); falling back",
+                    "Digest rejected for group_id=%s (%s, finish_reason=%s, chars=%d); falling back",
+                    group_id,
                     reason,
                     finish_reason,
                     len(cleaned),
                 )
                 return self._generate_fallback(trimmed, fallback_msg), len(trimmed)
+            logger.info(
+                "Digest generated: group_id=%s articles=%d chars=%d finish_reason=%s elapsed=%.1fs",
+                group_id,
+                len(trimmed),
+                len(cleaned),
+                finish_reason or "-",
+                time.monotonic() - started,
+            )
             return cleaned, len(trimmed)
         except Exception as exc:
-            logger.warning("LLM digest generation failed: %s; falling back to link directory", exc)
+            logger.warning(
+                "LLM digest generation failed for group_id=%s: %s; falling back to link directory",
+                group_id,
+                exc,
+            )
             return self._generate_fallback(trimmed, fallback_msg), len(trimmed)
 
     async def generate_single_summary(
         self, article: RSSArticle, group_id: int
     ) -> str:
         """Generate summary for a single article using group's Persona prompt."""
+        logger.debug(
+            "Generating single summary: group_id=%s article_id=%s",
+            group_id,
+            article.id,
+        )
         system_prompt = await self._get_group_system_prompt(group_id)
         prompt = (
             "请用简明扼要的 1-2 句话总结以下文章要点：\n\n"
