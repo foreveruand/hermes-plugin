@@ -1,0 +1,14 @@
+{
+  "name": "nikke-tracker",
+  "label": "NIKKE 养成",
+  "description": "NIKKE 角色养成看板：海报墙、四部位词条编辑、洗条建议与配队速查",
+  "icon": "Star",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/nikke",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

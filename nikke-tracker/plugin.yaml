@@ -1,0 +1,7 @@
+name: nikke-tracker
+version: "0.1.0"
+description: "Self-contained NIKKE progression wall: character posters, tier-based gear affix editor with batched save, reroll advice, and team references. Bundles its own targets/advisor/markdown renderer; UI/API live in dashboard/."
+author: "foreveruand"
+provides_tools: []
+provides_hooks: []
+provides_middleware: []

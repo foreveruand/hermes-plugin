@@ -11,6 +11,7 @@
 | idle-compaction | 空闲上下文压缩（修复 Issue #79357 的时钟重置问题） |
 | imap-watcher | IMAP IDLE 实时邮件到达提醒，多账号多文件夹单连接复用 |
 | media-downloader | yt-dlp / gallery-dl 统一下载 + ASMR.ONE 管线 + 百度网盘加密中转（bdpan handoff） |
+| nikke-tracker | NIKKE 养成看板：海报墙、四部位词条编辑、洗条建议、主/副词条校核与头像上传；依赖 `skills/productivity/nikke-tracker` |
 | qbittorrent-manager | 从 Hermes 管理 qBittorrent 种子、标签与 RSS 规则 |
 | vibeguard | 模型边界本地脱敏：站点、设备等敏感实体名映射为固定代号，证件号、手机号替换为随机假值，本地工具与最终答复时还原 |
 
@@ -30,6 +31,7 @@ hermes-plugin/
 ├── idle-compaction/
 ├── imap-watcher/
 ├── media-downloader/
+├── nikke-tracker/          # 依赖 nikke-tracker 技能的 Dashboard 扩展
 ├── qbittorrent-manager/
 └── vibeguard/
 ```
