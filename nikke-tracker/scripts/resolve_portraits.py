@@ -3,15 +3,16 @@
 
 Order:
   1. local override (data/nikke/portraits/overrides/)
-  2. Prydwen character list (https://www.prydwen.gg/nikke/characters) --
-     scrape the real image URLs keyed by character slug (PRIMARY source)
-  3. curated Prydwen slug (dashboard/portrait_map.json) -> CDN card URL
-  4. BiliGame Chinese character page
-  5. Prydwen slug from targets.json "en"
-  6. unresolved -> placeholder in the UI
+  2. GameKee NIKKE character catalogue (https://www.gamekee.com/nikke) --
+     PRIMARY source: its API returns a Chinese name + portrait PNG per character
+  3. Prydwen character list (https://www.prydwen.gg/nikke/characters) --
+     fallback: real image URLs keyed by character slug
+  4. curated Prydwen slug (dashboard/portrait_map.json) -> CDN card URL
+  5. unresolved -> placeholder in the UI
 
-Runtime never fetches from the dashboard process itself; the resolver script
-runs with the system Python and the dashboard only reads cached WebP files.
+BiliGame was retired (the wiki no longer serves character images).  Runtime
+never fetches from the dashboard process itself; the resolver script runs with
+the system Python and the dashboard only reads cached WebP files.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ import io
 import json
 import re
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 from PIL import Image, ImageOps
@@ -39,6 +40,7 @@ from nikke_lib import nikke_db as db  # noqa: E402
 
 TARGETS = db.ensure_targets()
 MAP_FILE = PLUGIN / "dashboard" / "portrait_map.json"
+NAME_MAP_FILE = PLUGIN / "references" / "portrait_names.json"
 OUT = db.data_dir() / "portraits"
 INDEX = OUT / "index.json"
 OVERRIDES = OUT / "overrides"
@@ -49,15 +51,14 @@ UA = (
 )
 HEADERS = {
     "User-Agent": UA,
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.prydwen.gg/",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Referer": "https://www.gamekee.com/",
 }
-# any first-party Prydwen host is accepted by allowed(); these two are the
-# BiliGame hosts used by the Chinese-wiki fallback
-ALLOWED_HOSTS = {"patchwiki.biligame.com", "wiki.biligame.com"}
+# First-party hosts only; both are matched by suffix in allowed().
+GAMEKEE_INDEX = "https://www.gamekee.com/v1/entry/treesByPid?pid=64599"
+GAMEKEE_HEADERS = {"game-alias": "nikke", "game-id": "1253", "Accept": "application/json"}
 PRYDWEN_INDEX = "https://www.prydwen.gg/nikke/characters"
 PRYDWEN = "https://cdn.prydwen.gg/images/nikke/characters/{slug}_card.webp"
-BILIGAME = "https://wiki.biligame.com/nikke/{name}"
 EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 
 
@@ -70,7 +71,14 @@ def safe_name(name: str) -> str:
 
 
 def norm(text: str) -> str:
-    return re.sub(r"[\s:：·・\-_（）()【】\[\]]+", "", text).lower()
+    """Normalise a character name for GameKee catalogue matching.
+
+    Strips full/half-width punctuation and the plugin's own decorators such as
+    【珍藏品】 so "托比【珍藏品】" matches the catalogue entry "托比".
+    """
+    text = text.strip().lower().replace("：", ":").replace("【", "[").replace("】", "]")
+    text = re.sub(r"\[(?:珍藏品|改称)[^\]]*\]", "", text)
+    return re.sub(r"[\s:·・\-_（）()\[\]]+", "", text)
 
 
 def load_json(path: Path, default):
@@ -94,12 +102,19 @@ def allowed(url: str) -> bool:
         host = (urlparse(url).hostname or "").lower()
     except ValueError:
         return False
-    if host == "prydwen.gg" or host.endswith(".prydwen.gg"):
-        return True
-    return host in ALLOWED_HOSTS
+    return (
+        host == "prydwen.gg" or host.endswith(".prydwen.gg")
+        or host == "gamekee.com" or host.endswith(".gamekee.com")
+    )
 
 
-def _fetch(url: str, *, timeout: int = 15, image: bool = False) -> bytes:
+def _fetch(
+    url: str,
+    *,
+    timeout: int = 15,
+    image: bool = False,
+    extra_headers: dict[str, str] | None = None,
+) -> bytes:
     if not allowed(url):
         raise ValueError(f"不允许的图源: {url}")
     headers = dict(HEADERS)
@@ -108,8 +123,13 @@ def _fetch(url: str, *, timeout: int = 15, image: bool = False) -> bytes:
         if image
         else "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
     )
-    if "biligame" in (urlparse(url).hostname or ""):
-        headers["Referer"] = "https://wiki.biligame.com/"
+    host = urlparse(url).hostname or ""
+    if "gamekee" in host:
+        headers["Referer"] = "https://www.gamekee.com/"
+    elif "prydwen" in host:
+        headers["Referer"] = "https://www.prydwen.gg/"
+    if extra_headers:
+        headers.update(extra_headers)
     res = requests.get(url, timeout=timeout, headers=headers, stream=True)
     if res.status_code != 200:
         raise ValueError(f"HTTP {res.status_code}")
@@ -177,57 +197,61 @@ def try_prydwen(slug: str, reasons: list[str] | None = None) -> tuple[bytes, str
         return None
 
 
-def biligame_candidates(name: str, aliases: list[str]) -> list[str]:
+# ---------------------------------------------------------------------------
+# primary source: the GameKee character catalogue API
+# ---------------------------------------------------------------------------
+def gamekee_index(reasons: list[str]) -> dict[str, str]:
+    """norm(Chinese name) -> portrait image URL, fetched once per process."""
+    if GAMEKEE_INDEX in _INDEX_CACHE:
+        return _INDEX_CACHE[GAMEKEE_INDEX]
+    pairs: dict[str, str] = {}
+    try:
+        raw = _fetch(GAMEKEE_INDEX, timeout=20, extra_headers=GAMEKEE_HEADERS)
+        rows = json.loads(raw.decode("utf-8", "replace")).get("data") or []
+        for row in rows:
+            name = str(row.get("name") or "").strip()
+            icon = str(row.get("icon") or "").strip()
+            if not name or not icon:
+                continue
+            url = "https:" + icon if icon.startswith("//") else icon
+            pairs.setdefault(norm(name), url)
+    except Exception as exc:
+        reasons.append(f"GameKee 图鉴: {exc}")
+    _INDEX_CACHE[GAMEKEE_INDEX] = pairs
+    return pairs
+
+
+def gamekee_name_candidates(name: str, target: dict, name_map: dict) -> list[str]:
     out: list[str] = []
-    for value in [name, *aliases]:
-        if not value:
-            continue
-        for candidate in (
-            value,
-            re.sub(r"【[^】]*】", "", value).strip(),
-            re.split(r"[:：]", value)[0].strip(),
-        ):
-            candidate = candidate.strip()
-            if candidate and candidate not in out:
-                out.append(candidate)
+
+    def add(value: str) -> None:
+        value = (value or "").strip()
+        if value and value not in out:
+            out.append(value)
+
+    # A name corrected in the dashboard 校核 form wins over every guess.
+    add(str(target.get("portrait_name") or ""))
+    add(str(name_map.get(name) or ""))
+    add(name)
+    for alias in target.get("aliases") or []:
+        add(str(alias or ""))
     return out
 
 
-def try_biligame(name: str, aliases: list[str], reasons: list[str] | None = None) -> tuple[bytes, str] | None:
-    for candidate in biligame_candidates(name, aliases):
-        url = BILIGAME.format(name=quote(candidate))
-        try:
-            res = requests.get(url, timeout=12, headers={"User-Agent": UA})
-            if res.status_code != 200:
-                continue
-            html = res.text
-            title_match = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
-            title = norm(title_match.group(1)) if title_match else ""
-            if title and norm(candidate) not in title:
-                continue
-            images = re.findall(
-                r'https://patchwiki\.biligame\.com/images/nikke/thumb/[^"\']+?/240px-[^"\']+?\.png',
-                html,
-            )
-            if not images:
-                continue
-            preferred = [url for url in images if re.search(r"_s\.png$", url)]
-            choices = preferred or images
-            choices = [
-                url for url in choices
-                if not re.search(r"(SSR|SR/|/R\.png|武器|步枪|机枪|狙击|霰弹|冲锋|图标|icon)", url, re.I)
-            ]
-            for image_url in choices[:1]:
-                try:
-                    return download(image_url), image_url
-                except Exception:
-                    continue
-        except Exception:
+def try_gamekee(
+    name: str, target: dict, name_map: dict, reasons: list[str]
+) -> tuple[bytes, str] | None:
+    pairs = gamekee_index(reasons)
+    if not pairs:
+        return None
+    for candidate in gamekee_name_candidates(name, target, name_map):
+        url = pairs.get(norm(candidate))
+        if not url:
             continue
-        finally:
-            time.sleep(0.15)
-    if reasons is not None:
-        reasons.append("BiliGame: 未找到匹配头像")
+        try:
+            return download(url), url
+        except Exception as exc:
+            reasons.append(f"GameKee 头像 {candidate}: {exc}")
     return None
 
 
@@ -238,9 +262,9 @@ def slugify(value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# primary source: the Prydwen character list page
+# fallback source: the Prydwen character list page
 # ---------------------------------------------------------------------------
-_INDEX_CACHE: dict[str, str] = {}
+_INDEX_CACHE: dict[str, Any] = {}
 _IMG_PATH = (
     r"/images/nikke/characters/"
     r"([a-z0-9][a-z0-9\-]*?)(?:_(?:card|icon|portrait|avatar|full|thumb))?"
@@ -304,6 +328,8 @@ def prydwen_slug_candidates(name: str, target: dict, mapping: dict) -> list[str]
             out.append(slug)
 
     add((mapping.get(name) or {}).get("slug", ""))
+    # A name corrected in the dashboard 校核 form may be an English name/slug.
+    add(str(target.get("portrait_name") or ""))
     english = (target.get("en") or "").strip()
     if english:
         add(english)
@@ -344,13 +370,18 @@ def try_prydwen_index(
 
 
 def resolve_one(
-    name: str, target: dict, mapping: dict, reasons: list[str]
+    name: str, target: dict, mapping: dict, name_map: dict, reasons: list[str]
 ) -> tuple[bytes | None, str, str]:
     override = local_override(name)
     if override:
         return override.read_bytes(), "local", str(override)
 
-    # PRIMARY: real image URLs scraped from the Prydwen character list
+    # PRIMARY: GameKee catalogue, matched by corrected Chinese name
+    hit = try_gamekee(name, target, name_map, reasons)
+    if hit:
+        return hit[0], "gamekee", hit[1]
+
+    # FALLBACK: real image URLs scraped from the Prydwen character list
     hit = try_prydwen_index(name, target, mapping, reasons)
     if hit:
         return hit[0], "prydwen", hit[1]
@@ -358,17 +389,6 @@ def resolve_one(
     entry = mapping.get(name) or {}
     if entry.get("source") == "prydwen" and entry.get("slug"):
         hit = try_prydwen(entry["slug"], reasons)
-        if hit:
-            return hit[0], "prydwen", hit[1]
-
-    aliases = target.get("aliases") or []
-    hit = try_biligame(name, aliases, reasons)
-    if hit:
-        return hit[0], "biligame", hit[1]
-
-    english = (target.get("en") or "").strip()
-    if english:
-        hit = try_prydwen(slugify(english), reasons)
         if hit:
             return hit[0], "prydwen", hit[1]
 
@@ -388,6 +408,7 @@ def main() -> int:
     targets = load_json(TARGETS, {}).get("characters") or []
     by_name = {item["name"]: item for item in targets}
     mapping = load_json(MAP_FILE, {})
+    name_map = load_json(NAME_MAP_FILE, {})
     progress = load_json(OUT.parent / "player_progress.json", {})
     owned = set((progress.get("characters") or {}).keys())
 
@@ -402,7 +423,7 @@ def main() -> int:
     items = index_doc.get("items") if isinstance(index_doc, dict) else {}
     items = dict(items) if isinstance(items, dict) else {}
 
-    counts = {"local": 0, "prydwen": 0, "biligame": 0, "unresolved": 0, "skipped": 0}
+    counts = {"local": 0, "gamekee": 0, "prydwen": 0, "unresolved": 0, "skipped": 0}
     unresolved: list[str] = []
 
     for position, name in enumerate(names, start=1):
@@ -429,12 +450,12 @@ def main() -> int:
 
         print(f"[{position}/{len(names)}] {name} ...", end=" ", flush=True)
         if args.dry_run:
-            plan = "override" if local_override(name) else "prydwen-index → " + (mapping.get(name) or {}).get("slug", "slug(en)/biligame")
-            print("plan:", plan)
+            plan = "override" if local_override(name) else "gamekee → prydwen"
+            print("plan:", plan, "| name:", name_map.get(name, name))
             continue
 
         reasons: list[str] = []
-        raw, source, source_url = resolve_one(name, target, mapping, reasons)
+        raw, source, source_url = resolve_one(name, target, mapping, name_map, reasons)
         if not raw:
             items[key] = {
                 "name": name,
@@ -482,7 +503,7 @@ def main() -> int:
     print("完成:", ", ".join(f"{key}={value}" for key, value in counts.items()))
     if unresolved:
         print("未解析:", "、".join(unresolved))
-        print("可把图片放到", OVERRIDES, "后加 --only 重跑")
+        print("可把图片放到", OVERRIDES, "后加 --only 重跑；或在面板「校核」里填写头像名称")
     return 0
 
 

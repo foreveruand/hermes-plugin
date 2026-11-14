@@ -202,6 +202,7 @@ function TargetEditor({ target, affixOptions, onSave, onCancel, saving }) {
   const [sub, setSub] = useState((requirement.sub_affixes || []).map((item) => item.affix));
   const [affixNote, setAffixNote] = useState(requirement.text || "");
   const [note, setNote] = useState(target.note || "");
+  const [portraitName, setPortraitName] = useState(target.portrait_name || "");
 
   const setSkill = (index, value) => {
     const next = [...skills];
@@ -294,6 +295,15 @@ function TargetEditor({ target, affixOptions, onSave, onCancel, saving }) {
         />
       </label>
       <label className="nt-field nt-field-wide">
+        <span>头像名称（图鉴匹配用）</span>
+        <input
+          className="nt-input"
+          value={portraitName}
+          onChange={(event) => setPortraitName(event.target.value)}
+          placeholder="留空自动匹配；抓不到时填 GameKee 中文名或 Prydwen 英文名，如「渡鸦」"
+        />
+      </label>
+      <label className="nt-field nt-field-wide">
         <span>来源 / 备注</span>
         <textarea
           className="nt-input nt-textarea"
@@ -315,6 +325,7 @@ function TargetEditor({ target, affixOptions, onSave, onCancel, saving }) {
             affix_sub: sub,
             affix_note: affixNote,
             note,
+            portrait_name: portraitName,
           })}
         >
           {saving ? "保存中…" : "保存校核"}

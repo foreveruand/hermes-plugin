@@ -63,7 +63,12 @@ def test_prydwen_index_parser(tmp_path, monkeypatch):
     spec.loader.exec_module(mod)
     assert mod.allowed("https://www.prydwen.gg/nikke/characters")
     assert mod.allowed("https://cdn.prydwen.gg/images/nikke/characters/x_card.webp")
+    assert mod.allowed("https://cdnimg-v2.gamekee.com/wiki2.0/pro/1253/x.png")
+    assert mod.allowed("https://www.gamekee.com/v1/entry/treesByPid?pid=64599")
     assert not mod.allowed("https://example.com/evil.png")
+    assert not mod.allowed("https://wiki.biligame.com/nikke/x")
+    assert mod.norm("托比【珍藏品】") == "托比"
+    assert mod.norm("红莲：弑神") == mod.norm("红莲:弑神")
     html = (
         '<a href="/nikke/characters/red-hood">'
         '<img src="https://cdn.prydwen.gg/images/nikke/characters/red-hood_card.webp"></a>'
@@ -74,3 +79,14 @@ def test_prydwen_index_parser(tmp_path, monkeypatch):
     assert pairs["red-hood"][0].endswith("red-hood_card.webp")
     assert pairs["crown"][0] == "https://cdn.prydwen.gg/images/nikke/characters/crown_card.webp"
     assert pairs["alice"][0].endswith("alice_card.webp")
+
+
+def test_gamekee_name_map_covers_targets():
+    import json
+
+    name_map = json.loads((_PLUGIN / "references" / "portrait_names.json").read_text(encoding="utf-8"))
+    targets = json.loads((_PLUGIN / "references" / "targets.json").read_text(encoding="utf-8"))
+    names = {c["name"] for c in targets["characters"]}
+    assert set(name_map) <= names
+    assert all(isinstance(v, str) and v for v in name_map.values())
+    assert len(name_map) >= 25

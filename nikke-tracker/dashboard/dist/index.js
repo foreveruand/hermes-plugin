@@ -784,6 +784,7 @@
     const [sub, setSub] = useState((requirement.sub_affixes || []).map((item) => item.affix));
     const [affixNote, setAffixNote] = useState(requirement.text || "");
     const [note, setNote] = useState(target.note || "");
+    const [portraitName, setPortraitName] = useState(target.portrait_name || "");
     const setSkill = (index, value) => {
       const next = [...skills];
       next[index] = Math.max(1, Math.min(10, Number(value || 1)));
@@ -838,6 +839,14 @@
         onChange: (event) => setAffixNote(event.target.value),
         placeholder: "\u4F8B\u5982\uFF1A\u4E3B: \u88C5\u5F391+ | \u526F: \u4F18\u8D8A/\u653B\u51FB"
       }
+    )), /* @__PURE__ */ React.createElement("label", { className: "nt-field nt-field-wide" }, /* @__PURE__ */ React.createElement("span", null, "\u5934\u50CF\u540D\u79F0\uFF08\u56FE\u9274\u5339\u914D\u7528\uFF09"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "nt-input",
+        value: portraitName,
+        onChange: (event) => setPortraitName(event.target.value),
+        placeholder: "\u7559\u7A7A\u81EA\u52A8\u5339\u914D\uFF1B\u6293\u4E0D\u5230\u65F6\u586B GameKee \u4E2D\u6587\u540D\u6216 Prydwen \u82F1\u6587\u540D\uFF0C\u5982\u300C\u6E21\u9E26\u300D"
+      }
     )), /* @__PURE__ */ React.createElement("label", { className: "nt-field nt-field-wide" }, /* @__PURE__ */ React.createElement("span", null, "\u6765\u6E90 / \u5907\u6CE8"), /* @__PURE__ */ React.createElement(
       "textarea",
       {
@@ -858,7 +867,8 @@
           affix_main: main,
           affix_sub: sub,
           affix_note: affixNote,
-          note
+          note,
+          portrait_name: portraitName
         })
       },
       saving ? "\u4FDD\u5B58\u4E2D\u2026" : "\u4FDD\u5B58\u6821\u6838"

@@ -1043,7 +1043,8 @@ def _derived_affix_note(main: list[str], sub: list[str]) -> str:
 
 
 def save_target(name: str, body: dict[str, Any], targets_rev: str | None = None) -> dict[str, Any]:
-    """Manually correct a target's tier/skills/main-sub affixes and note."""
+    """Manually correct a target's tier/skills/main-sub affixes, notes and
+    the catalogue name used to resolve its portrait."""
     db = modules().db
     with _TARGETS_LOCK:
         doc = db.load_targets()
@@ -1074,6 +1075,13 @@ def save_target(name: str, body: dict[str, Any], targets_rev: str | None = None)
         if not affix_note:
             affix_note = _derived_affix_note(main, sub)
         note = _clean_text(body.get("note"), "备注", 3000) if "note" in body else str(target.get("note") or "")
+        # Name used to match the GameKee / Prydwen portrait catalogues.  Empty
+        # means "fall back to the automatic name resolution".
+        portrait_name = (
+            _clean_text(body.get("portrait_name"), "头像名称", 120)
+            if "portrait_name" in body
+            else str(target.get("portrait_name") or "")
+        )
 
         target["tier"] = tier
         target["skills"] = skills
@@ -1081,6 +1089,7 @@ def save_target(name: str, body: dict[str, Any], targets_rev: str | None = None)
         target["affix_sub"] = sub
         target["affix_note"] = affix_note
         target["note"] = note
+        target["portrait_name"] = portrait_name
         # Keep the 8/12 target counts intact for the advisor's score and the
         # skill's schema; just make sure the corrected main/sub affixes are
         # included in the priority list.
