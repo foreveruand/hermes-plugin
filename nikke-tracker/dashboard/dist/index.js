@@ -1295,9 +1295,11 @@
     const refreshPortrait = useCallback(async (name, notify) => {
       try {
         const result = await fetchPortrait(name);
-        if (result && result.fetched && result.portrait) {
-          if (notify) toast("\u5934\u50CF\u5DF2\u8865\u4E0A", "ok");
+        if (result && result.portrait && result.portrait.has_cache) {
+          if (notify) toast(result.fetched ? "\u5934\u50CF\u5DF2\u8865\u4E0A" : "\u5934\u50CF\u5DF2\u5C31\u7EEA", "ok");
           patchCharacter(result.name || name, { portrait: result.portrait });
+        } else if (notify && result && !result.fetched) {
+          toast("\u672A\u627E\u5230\u5934\u50CF\uFF0C\u53EF\u5728\u300C\u6821\u6838\u300D\u91CC\u586B\u5199\u5934\u50CF\u540D\u79F0", "warn");
         }
         return result;
       } catch (err) {

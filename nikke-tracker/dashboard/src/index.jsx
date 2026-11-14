@@ -89,9 +89,11 @@ function App() {
   const refreshPortrait = useCallback(async (name, notify) => {
     try {
       const result = await fetchPortrait(name);
-      if (result && result.fetched && result.portrait) {
-        if (notify) toast("头像已补上", "ok");
+      if (result && result.portrait && result.portrait.has_cache) {
+        if (notify) toast(result.fetched ? "头像已补上" : "头像已就绪", "ok");
         patchCharacter(result.name || name, { portrait: result.portrait });
+      } else if (notify && result && !result.fetched) {
+        toast("未找到头像，可在「校核」里填写头像名称", "warn");
       }
       return result;
     } catch (err) {
