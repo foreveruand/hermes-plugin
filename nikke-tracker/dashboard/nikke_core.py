@@ -589,7 +589,13 @@ def fetch_portrait(name: str) -> dict[str, Any]:
             raise ServiceUnavailable(f"头像抓取失败: {detail}")
 
     info = portrait_info(canonical)
-    return {"ok": True, "name": canonical, "fetched": bool(info.get("has_cache")), "portrait": info}
+    fetched = bool(info.get("has_cache"))
+    result = {"ok": True, "name": canonical, "fetched": fetched, "portrait": info}
+    if not fetched:
+        detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()[-300:]
+        if detail:
+            result["reason"] = detail
+    return result
 
 
 def save_portrait(name: str, data_url: str) -> dict[str, Any]:

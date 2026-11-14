@@ -159,6 +159,15 @@ def test_render_is_stable(env):
     assert (env["vault"] / "游戏与联机" / "nikke.md").is_file()
 
 
+def test_render_note_drops_legacy_recommendation_rows(env):
+    result = core.render()
+    assert result["ok"] is True
+    text = (env["vault"] / "游戏与联机" / "nikke.md").read_text(encoding="utf-8")
+    assert "推荐词条（8 词条）" not in text
+    assert "12 词条极致" not in text
+    assert "目标基准" in text
+
+
 def test_add_and_remove_unowned(env):
     target = _unowned_target()
     assert core.detail(target)["owned"] is False

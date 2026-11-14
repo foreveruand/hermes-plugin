@@ -5,7 +5,7 @@
 - 角色卡：头像、右上角 T0/T1/T2、装备词条的成型度环、收藏星。
 - 悬浮详情：四个部位 × 三个词条槽，词条类型下拉 + **阶数下拉** + 锁定；技能 / 收藏品。
 - 四件装备**一次保存**：一个「保存四件」按钮，服务端一次写入、一次诊断、一次 Markdown 渲染。
-- 建议：复用内置 `nikke_advisor.diagnose()` 的洗条顺序、缺口和石头预估。
+- 建议：复用内置 `nikke_advisor.diagnose()` 的洗练方案（期望石头、锁定建议）、缺口和词条诊断。
 - 配队：异常拦截与单人突击参考表（只读）。
 - 收藏队列：按梯度 + 成型度自动排序。
 - 头像：自动抓取、手动上传覆盖；推荐信息：详情页「目标基准 → 校核」可改梯度/技能/主副词条。
@@ -48,6 +48,12 @@ references/solo-raid-teams.md
 
 数值由词条阶数决定，界面用「N阶」下拉，不再手输百分比。旧数据里不落在标准阶上的数值显示为「自定义 x.xx%」，只有主动选阶才会覆盖。所有 11 个词条（含攻击速度、最大体力）都有 15 阶表。
 
+## 洗练石头预估
+
+每次刷新（洗一次）：未锁定的词条1 必出新词条，词条2/3 分别以 50% / 30% 概率出现，未出现即空槽；锁定槽保留。刷新消耗为 1 石头（不锁定）/ 2 石头（锁 1 条）/ 3 石头（锁 2 条）。
+
+期望石头由 `nikke_advisor` 的 27 状态值迭代模型精确求解，并给出「当前是否锁定、命中后锁哪几条」的建议。命中口径 = 出现概率 × 目标词条类型概率（词条池 11 种、均匀分布假设，即角色优先词条数 / 11）；数值/阶数精洗属于后续阶段，不计入该预估。导出的 `nikke.md` 不再包含旧版「推荐词条（8 词条）/ 12 词条极致」默认行，词条要求以一图流说明为准。
+
 ## 构建
 
 运行时不需要 Node，`dashboard/dist/` 已提交。改 `dashboard/src/` 后：
@@ -66,7 +72,7 @@ python3 scripts/resolve_portraits.py --owned-only
 python3 scripts/resolve_portraits.py --only 小红帽 --force
 ```
 
-解析顺序：本地覆盖 → `dashboard/portrait_map.json` 的 Prydwen slug → BiliGame 中文页 → `targets.json` 的 `en` → 占位。下载限制 3MB / 图片 content-type / 仅允许 Prydwen CDN 与 BiliGame。脚本直接复用插件内置 `nikke_lib` 解析目标库路径。
+解析顺序：本地覆盖 → Prydwen 角色列表页（`https://www.prydwen.gg/nikke/characters`，解析真实图片链接，首要图源）→ `dashboard/portrait_map.json` 的 slug 拼 CDN → BiliGame 中文页 → `targets.json` 的 `en` 拼 CDN → 占位。下载限制 3MB / 非 HTML 内容类型 / 仅允许 `*.prydwen.gg` 与 BiliGame 图床，请求带浏览器 UA 与 Referer；解析失败原因会打印出来。脚本直接复用插件内置 `nikke_lib` 解析目标库路径。
 
 本地覆盖：
 

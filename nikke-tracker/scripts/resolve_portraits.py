@@ -3,12 +3,15 @@
 
 Order:
   1. local override (data/nikke/portraits/overrides/)
-  2. curated Prydwen slug (dashboard/portrait_map.json)
-  3. BiliGame Chinese character page
-  4. Prydwen slug from targets.json "en"
-  5. unresolved -> placeholder in the UI
+  2. Prydwen character list (https://www.prydwen.gg/nikke/characters) --
+     scrape the real image URLs keyed by character slug (PRIMARY source)
+  3. curated Prydwen slug (dashboard/portrait_map.json) -> CDN card URL
+  4. BiliGame Chinese character page
+  5. Prydwen slug from targets.json "en"
+  6. unresolved -> placeholder in the UI
 
-Runtime never fetches; the dashboard only reads cached WebP files.
+Runtime never fetches from the dashboard process itself; the resolver script
+runs with the system Python and the dashboard only reads cached WebP files.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import requests
 from PIL import Image, ImageOps
@@ -40,8 +43,19 @@ OUT = db.data_dir() / "portraits"
 INDEX = OUT / "index.json"
 OVERRIDES = OUT / "overrides"
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Hermes-nikke-tracker/0.1"
-ALLOWED_HOSTS = {"cdn.prydwen.gg", "patchwiki.biligame.com", "wiki.biligame.com"}
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+HEADERS = {
+    "User-Agent": UA,
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.prydwen.gg/",
+}
+# any first-party Prydwen host is accepted by allowed(); these two are the
+# BiliGame hosts used by the Chinese-wiki fallback
+ALLOWED_HOSTS = {"patchwiki.biligame.com", "wiki.biligame.com"}
+PRYDWEN_INDEX = "https://www.prydwen.gg/nikke/characters"
 PRYDWEN = "https://cdn.prydwen.gg/images/nikke/characters/{slug}_card.webp"
 BILIGAME = "https://wiki.biligame.com/nikke/{name}"
 EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
@@ -77,32 +91,51 @@ def write_json(path: Path, data) -> None:
 
 def allowed(url: str) -> bool:
     try:
-        return (urlparse(url).hostname or "") in ALLOWED_HOSTS
+        host = (urlparse(url).hostname or "").lower()
     except ValueError:
         return False
+    if host == "prydwen.gg" or host.endswith(".prydwen.gg"):
+        return True
+    return host in ALLOWED_HOSTS
 
 
-def download(url: str, *, timeout: int = 12) -> bytes:
+def _fetch(url: str, *, timeout: int = 15, image: bool = False) -> bytes:
     if not allowed(url):
         raise ValueError(f"不允许的图源: {url}")
-    res = requests.get(url, timeout=timeout, headers={"User-Agent": UA}, stream=True)
+    headers = dict(HEADERS)
+    headers["Accept"] = (
+        "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+        if image
+        else "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    )
+    if "biligame" in (urlparse(url).hostname or ""):
+        headers["Referer"] = "https://wiki.biligame.com/"
+    res = requests.get(url, timeout=timeout, headers=headers, stream=True)
     if res.status_code != 200:
         raise ValueError(f"HTTP {res.status_code}")
     if not allowed(res.url):
         raise ValueError(f"重定向到不允许的图源: {res.url}")
     content_type = (res.headers.get("content-type") or "").lower()
-    if not content_type.startswith("image/"):
+    # Some CDNs serve WebP as application/octet-stream; a strict image/*
+    # check silently rejected valid portraits.  save_webp() validates the
+    # payload with PIL, so only obvious HTML/JSON error pages are rejected.
+    if image and ("text/html" in content_type or "json" in content_type):
         raise ValueError(f"不是图片: {content_type}")
-    chunks = []
+    chunks: list[bytes] = []
     total = 0
+    limit = 3 * 1024 * 1024 if image else 8 * 1024 * 1024
     for chunk in res.iter_content(64 * 1024):
         if not chunk:
             continue
         total += len(chunk)
-        if total > 3 * 1024 * 1024:
-            raise ValueError("图片超过 3MB")
+        if total > limit:
+            raise ValueError("响应超过大小限制")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+def download(url: str, *, timeout: int = 12) -> bytes:
+    return _fetch(url, timeout=timeout, image=True)
 
 
 def save_webp(raw: bytes, path: Path) -> tuple[int, int]:
@@ -132,13 +165,15 @@ def prydwen_url(slug: str) -> str:
     return PRYDWEN.format(slug=slug)
 
 
-def try_prydwen(slug: str) -> tuple[bytes, str] | None:
+def try_prydwen(slug: str, reasons: list[str] | None = None) -> tuple[bytes, str] | None:
     if not slug:
         return None
     url = prydwen_url(slug)
     try:
         return download(url), url
-    except Exception:
+    except Exception as exc:
+        if reasons is not None:
+            reasons.append(f"Prydwen CDN {slug}: {exc}")
         return None
 
 
@@ -158,7 +193,7 @@ def biligame_candidates(name: str, aliases: list[str]) -> list[str]:
     return out
 
 
-def try_biligame(name: str, aliases: list[str]) -> tuple[bytes, str] | None:
+def try_biligame(name: str, aliases: list[str], reasons: list[str] | None = None) -> tuple[bytes, str] | None:
     for candidate in biligame_candidates(name, aliases):
         url = BILIGAME.format(name=quote(candidate))
         try:
@@ -191,6 +226,8 @@ def try_biligame(name: str, aliases: list[str]) -> tuple[bytes, str] | None:
             continue
         finally:
             time.sleep(0.15)
+    if reasons is not None:
+        reasons.append("BiliGame: 未找到匹配头像")
     return None
 
 
@@ -200,25 +237,138 @@ def slugify(value: str) -> str:
     return value.strip("-")
 
 
-def resolve_one(name: str, target: dict, mapping: dict) -> tuple[bytes | None, str, str]:
+# ---------------------------------------------------------------------------
+# primary source: the Prydwen character list page
+# ---------------------------------------------------------------------------
+_INDEX_CACHE: dict[str, str] = {}
+_IMG_PATH = (
+    r"/images/nikke/characters/"
+    r"([a-z0-9][a-z0-9\-]*?)(?:_(?:card|icon|portrait|avatar|full|thumb))?"
+    r"\.(?:webp|png|jpe?g)"
+)
+_INDEX_IMG_RE = re.compile(
+    r"(?:https?://(?:[a-z0-9\-]+\.)?prydwen\.gg|//(?:[a-z0-9\-]+\.)?prydwen\.gg)?" + _IMG_PATH,
+    re.I,
+)
+
+
+def prydwen_index(reasons: list[str]) -> str:
+    """Fetch the Prydwen character list once per process (in-memory cache)."""
+    if PRYDWEN_INDEX in _INDEX_CACHE:
+        return _INDEX_CACHE[PRYDWEN_INDEX]
+    try:
+        html = _fetch(PRYDWEN_INDEX, timeout=15).decode("utf-8", "replace")
+    except Exception as exc:
+        reasons.append(f"Prydwen 角色页: {exc}")
+        html = ""
+    _INDEX_CACHE[PRYDWEN_INDEX] = html
+    return html
+
+
+def parse_prydwen_index(html: str) -> dict[str, list[str]]:
+    """slug -> real character image URLs found on the Prydwen list page.
+
+    Handles plain CDN URLs, protocol-relative/relative paths, JSON-escaped
+    URLs and Next.js /_next/image?url=... proxies.
+    """
+    text = html.replace("\\/", "/").replace("\\u002F", "/").replace("&amp;", "&")
+    for proxy in re.findall(r'/_next/image\?[^"\'\s<>]+', text):
+        inner = unquote(
+            parse_qs(urlparse("https://www.prydwen.gg" + proxy).query).get("url", [""])[0]
+        )
+        if "/images/nikke/characters/" in inner:
+            text += " " + inner
+    out: dict[str, list[str]] = {}
+    for match in _INDEX_IMG_RE.finditer(text):
+        slug = match.group(1).lower()
+        url = match.group(0)
+        if url.startswith("//"):
+            url = "https:" + url
+        elif not url.startswith("http"):
+            url = "https://cdn.prydwen.gg" + (url if url.startswith("/") else "/" + url)
+        bucket = out.setdefault(slug, [])
+        if url not in bucket:
+            if "_card." in url:
+                bucket.insert(0, url)
+            else:
+                bucket.append(url)
+    return out
+
+
+def prydwen_slug_candidates(name: str, target: dict, mapping: dict) -> list[str]:
+    out: list[str] = []
+
+    def add(value: str) -> None:
+        slug = slugify(value or "")
+        if slug and slug not in out:
+            out.append(slug)
+
+    add((mapping.get(name) or {}).get("slug", ""))
+    english = (target.get("en") or "").strip()
+    if english:
+        add(english)
+        words = english.split()
+        if len(words) >= 2:
+            add(" ".join(reversed(words[:2])))
+    for alias in target.get("aliases") or []:
+        if re.search(r"[A-Za-z]", alias or ""):
+            add(alias)
+    return out
+
+
+def try_prydwen_index(
+    name: str, target: dict, mapping: dict, reasons: list[str]
+) -> tuple[bytes, str] | None:
+    html = prydwen_index(reasons)
+    if not html:
+        return None
+    pairs = parse_prydwen_index(html)
+    if not pairs:
+        reasons.append("Prydwen 角色页未解析到头像链接")
+        return None
+    for slug in prydwen_slug_candidates(name, target, mapping):
+        urls = list(pairs.get(slug) or [])
+        if not urls:  # obvious slug variant, e.g. rapi-red-hood vs rapi
+            urls = [
+                u
+                for key, bucket in pairs.items()
+                if key.startswith(slug + "-") or slug.startswith(key + "-")
+                for u in bucket
+            ]
+        for url in urls[:2]:
+            try:
+                return download(url), url
+            except Exception as exc:
+                reasons.append(f"Prydwen 头像 {slug}: {exc}")
+    return None
+
+
+def resolve_one(
+    name: str, target: dict, mapping: dict, reasons: list[str]
+) -> tuple[bytes | None, str, str]:
     override = local_override(name)
     if override:
         return override.read_bytes(), "local", str(override)
 
+    # PRIMARY: real image URLs scraped from the Prydwen character list
+    hit = try_prydwen_index(name, target, mapping, reasons)
+    if hit:
+        return hit[0], "prydwen", hit[1]
+
     entry = mapping.get(name) or {}
     if entry.get("source") == "prydwen" and entry.get("slug"):
-        hit = try_prydwen(entry["slug"])
+        hit = try_prydwen(entry["slug"], reasons)
         if hit:
             return hit[0], "prydwen", hit[1]
 
     aliases = target.get("aliases") or []
-    hit = try_biligame(name, aliases)
+    hit = try_biligame(name, aliases, reasons)
     if hit:
         return hit[0], "biligame", hit[1]
 
     english = (target.get("en") or "").strip()
     if english:
-        hit = try_prydwen(slugify(english))
+        hit = try_prydwen(slugify(english), reasons)
         if hit:
             return hit[0], "prydwen", hit[1]
 
@@ -279,11 +429,12 @@ def main() -> int:
 
         print(f"[{position}/{len(names)}] {name} ...", end=" ", flush=True)
         if args.dry_run:
-            source = "override" if local_override(name) else (mapping.get(name) or {}).get("slug", "biligame/en")
-            print("plan:", source)
+            plan = "override" if local_override(name) else "prydwen-index → " + (mapping.get(name) or {}).get("slug", "slug(en)/biligame")
+            print("plan:", plan)
             continue
 
-        raw, source, source_url = resolve_one(name, target, mapping)
+        reasons: list[str] = []
+        raw, source, source_url = resolve_one(name, target, mapping, reasons)
         if not raw:
             items[key] = {
                 "name": name,
@@ -295,7 +446,7 @@ def main() -> int:
             }
             counts["unresolved"] += 1
             unresolved.append(name)
-            print("unresolved")
+            print("unresolved |", "；".join(reasons[-3:]) if reasons else "无可用图源")
             continue
 
         try:

@@ -61,15 +61,6 @@ def _slot_text(slot: dict[str, Any]) -> str:
     return text
 
 
-def _target_line(target: dict[str, Any], key: str = "affix_targets") -> str:
-    note = target.get("note", "")
-    if "无要求" in note or "核心词条: 无" in note:
-        return "核心词条无特殊要求（一图流）"
-    counts = target.get(key) or {}
-    bits = [f"{canonical_affix(k)} ×{v}" for k, v in counts.items() if int(v) > 0]
-    return " · ".join(bits) if bits else "—"
-
-
 def render_markdown(progress: dict[str, Any], targets_doc: dict[str, Any]) -> str:
     scale = affix_scale(targets_doc)
     diags: list[dict[str, Any]] = []
@@ -163,8 +154,6 @@ def render_markdown(progress: dict[str, Any], targets_doc: dict[str, Any]) -> st
             f"爆裂 {t.get('burst', '')} · {t.get('weapon', '')} |"
         )
         lines.append(f"| 技能加点 | {' / '.join(map(str, t.get('skills', [10, 10, 10])))} |")
-        lines.append(f"| 推荐词条（8 词条） | {_target_line(t)} |")
-        lines.append(f"| 12 词条极致 | {_target_line(t, 'affix_targets_max')} |")
         lines.append(f"| 魔方 / 收藏品 | {t.get('cube', '—')} / {t.get('collectible', '—')} |")
         if t.get("note"):
             lines.append(f"| 说明 | {_cell(t['note'])} |")
@@ -212,7 +201,7 @@ def render_markdown(progress: dict[str, Any], targets_doc: dict[str, Any]) -> st
         if d["pieces"]:
             worst = min(d["pieces"], key=lambda p: p["score"])
             if worst["bad"]:
-                lines.append(f"**{worst['label']}洗条顺序（预计 {worst['remaining_cost']:.1f} 石头）**")
+                lines.append(f"**{worst['label']}洗练方案（期望 {worst['remaining_cost']:.1f} 石头）**")
                 lines.append("")
                 for i, step in enumerate(worst["steps"], start=1):
                     lines.append(f"{i}. {step}")
