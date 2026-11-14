@@ -56,6 +56,7 @@ HEADERS = {
 }
 # First-party hosts only; both are matched by suffix in allowed().
 GAMEKEE_INDEX = "https://www.gamekee.com/v1/entry/treesByPid?pid=64599"
+GAMEKEE_CONTENT = "https://api-cdn.gamekee.com/wiki2.0/pro/1253/content/{cid}.json"
 GAMEKEE_HEADERS = {"game-alias": "nikke", "game-id": "1253", "Accept": "application/json"}
 PRYDWEN_INDEX = "https://www.prydwen.gg/nikke/characters"
 PRYDWEN = "https://cdn.prydwen.gg/images/nikke/characters/{slug}_card.webp"
@@ -158,10 +159,18 @@ def download(url: str, *, timeout: int = 12) -> bytes:
     return _fetch(url, timeout=timeout, image=True)
 
 
-def save_webp(raw: bytes, path: Path) -> tuple[int, int]:
-    image = Image.open(io.BytesIO(raw))
-    image = image.convert("RGB")
-    image = ImageOps.fit(image, (256, 341), method=Image.Resampling.LANCZOS)
+def save_webp(raw: bytes, path: Path, *, top_align: bool = False) -> tuple[int, int]:
+    image = Image.open(io.BytesIO(raw)).convert("RGB")
+    if top_align:
+        # Plain 256x512 character art: a centred crop would cut off the head
+        # ornaments, so scale to the card width and crop from the top.
+        width, height = image.size
+        scaled = image.resize(
+            (256, max(341, round(height * 256 / width))), Image.Resampling.LANCZOS
+        )
+        image = scaled.crop((0, 0, 256, 341))
+    else:
+        image = ImageOps.fit(image, (256, 341), method=Image.Resampling.LANCZOS)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     image.save(tmp, format="WEBP", quality=82, method=6)
@@ -200,11 +209,11 @@ def try_prydwen(slug: str, reasons: list[str] | None = None) -> tuple[bytes, str
 # ---------------------------------------------------------------------------
 # primary source: the GameKee character catalogue API
 # ---------------------------------------------------------------------------
-def gamekee_index(reasons: list[str]) -> dict[str, str]:
-    """norm(Chinese name) -> portrait image URL, fetched once per process."""
+def gamekee_index(reasons: list[str]) -> dict[str, dict[str, str]]:
+    """norm(Chinese name) -> {icon, content_id}, fetched once per process."""
     if GAMEKEE_INDEX in _INDEX_CACHE:
         return _INDEX_CACHE[GAMEKEE_INDEX]
-    pairs: dict[str, str] = {}
+    entries: dict[str, dict[str, str]] = {}
     try:
         raw = _fetch(GAMEKEE_INDEX, timeout=20, extra_headers=GAMEKEE_HEADERS)
         rows = json.loads(raw.decode("utf-8", "replace")).get("data") or []
@@ -214,11 +223,63 @@ def gamekee_index(reasons: list[str]) -> dict[str, str]:
             if not name or not icon:
                 continue
             url = "https:" + icon if icon.startswith("//") else icon
-            pairs.setdefault(norm(name), url)
+            entries.setdefault(norm(name), {
+                "icon": url,
+                "content_id": str(row.get("content_id") or ""),
+            })
     except Exception as exc:
         reasons.append(f"GameKee 图鉴: {exc}")
-    _INDEX_CACHE[GAMEKEE_INDEX] = pairs
-    return pairs
+    _INDEX_CACHE[GAMEKEE_INDEX] = entries
+    return entries
+
+
+def gamekee_detail_portrait(
+    content_id: str, reasons: list[str]
+) -> tuple[bytes, str] | None:
+    """Clean character art from the detail page's 时装图（切换） cell.
+
+    The catalogue icon is a full card (rarity/element/company badges and a
+    banner).  The detail page instead ships a plain 256x512 character art
+    with no overlaid elements -- that is what we want for the wall.
+    """
+    if not content_id or not content_id.isdigit():
+        return None
+    key = f"gamekee-detail:{content_id}"
+    if key in _INDEX_CACHE:
+        return _INDEX_CACHE[key]
+    result: tuple[bytes, str] | None = None
+    try:
+        # EdgeOne rejects path-level Referer and JSON Accept on this host.
+        raw = _fetch(
+            GAMEKEE_CONTENT.format(cid=content_id),
+            timeout=20,
+            extra_headers={"Accept": "*/*"},
+        )
+        doc = json.loads(raw.decode("utf-8", "replace"))
+        content = doc.get("content") or "{}"
+        inner = json.loads(content) if isinstance(content, str) else content
+        for block in (inner.get("styleData") or [])[:1]:  # 基础时装
+            for row in block.get("data") or []:
+                for cell in row:
+                    if not isinstance(cell, dict) or cell.get("type") != "image":
+                        continue
+                    value = str(cell.get("value") or "")
+                    if "/w_256/h_512/" not in value:
+                        continue
+                    url = "https:" + value if value.startswith("//") else value
+                    try:
+                        result = download(url), url
+                    except Exception as exc:
+                        reasons.append(f"GameKee 立绘 {content_id}: {exc}")
+                    break
+                if result:
+                    break
+            if result:
+                break
+    except Exception as exc:
+        reasons.append(f"GameKee 详情 {content_id}: {exc}")
+    _INDEX_CACHE[key] = result
+    return result
 
 
 def gamekee_name_candidates(name: str, target: dict, name_map: dict) -> list[str]:
@@ -241,17 +302,22 @@ def gamekee_name_candidates(name: str, target: dict, name_map: dict) -> list[str
 def try_gamekee(
     name: str, target: dict, name_map: dict, reasons: list[str]
 ) -> tuple[bytes, str] | None:
-    pairs = gamekee_index(reasons)
-    if not pairs:
+    entries = gamekee_index(reasons)
+    if not entries:
         return None
     for candidate in gamekee_name_candidates(name, target, name_map):
-        url = pairs.get(norm(candidate))
-        if not url:
+        entry = entries.get(norm(candidate))
+        if not entry:
             continue
+        # Prefer the plain character art from the detail page.
+        hit = gamekee_detail_portrait(entry["content_id"], reasons)
+        if hit:
+            return hit
+        # Fall back to the catalogue card icon (has badges/banner).
         try:
-            return download(url), url
+            return download(entry["icon"]), entry["icon"]
         except Exception as exc:
-            reasons.append(f"GameKee 头像 {candidate}: {exc}")
+            reasons.append(f"GameKee 图鉴头像 {candidate}: {exc}")
     return None
 
 
@@ -443,6 +509,11 @@ def main() -> int:
                 }
             counts["skipped"] += 1
             continue
+        # A portrait uploaded by the user always wins over automatic refresh,
+        # unless they explicitly targeted that character with --only.
+        if existing.get("source") == "manual" and cache.is_file() and not args.only:
+            counts["skipped"] += 1
+            continue
         if existing.get("source") == "unresolved" and not args.refresh and not args.force:
             counts["unresolved"] += 1
             unresolved.append(name)
@@ -471,7 +542,7 @@ def main() -> int:
             continue
 
         try:
-            width, height = save_webp(raw, cache)
+            width, height = save_webp(raw, cache, top_align="/w_256/h_512/" in source_url)
         except Exception as exc:
             counts["unresolved"] += 1
             unresolved.append(name)

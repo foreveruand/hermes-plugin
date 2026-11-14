@@ -72,7 +72,7 @@ python3 scripts/resolve_portraits.py --owned-only
 python3 scripts/resolve_portraits.py --only 小红帽 --force
 ```
 
-解析顺序：本地覆盖 → GameKee 图鉴 API（`https://www.gamekee.com/nikke`，中文名直接匹配，**首要图源**）→ Prydwen 角色列表页（`https://www.prydwen.gg/nikke/characters`，英文名 / slug 兜底）→ `portrait_map.json` 的 slug 拼 CDN → 占位。BiliGame 已停用（不再更新角色图）。
+解析顺序：本地覆盖 → GameKee 角色详情页「时装图」立绘（`https://www.gamekee.com/nikke/<content_id>` 的 `styleData`，256×512 干净半身像，无卡框 / 属性图标等叠加元素，**首要图源**）→ GameKee 图鉴 icon（带卡片元素的兜底）→ Prydwen 角色列表页（`https://www.prydwen.gg/nikke/characters`，英文名 / slug 兜底）→ `portrait_map.json` 的 slug 拼 CDN → 占位。BiliGame 已停用（不再更新角色图）。干净立绘按卡片宽度顶部对齐裁剪，避免切掉头饰。
 
 名称匹配：`references/portrait_names.json` 内置中文名矫正（变体 / 国服译名 → GameKee 图鉴名），配合名称归一化覆盖 84/86 个角色；剩余角色在详情页「校核 → 头像名称」里填 GameKee 中文名或 Prydwen 英文名，保存写回 `<profile>/data/nikke/targets.json` 的 `portrait_name`，抓取时优先使用。下载限制 3MB / 非 HTML 内容类型 / 仅允许 `*.gamekee.com` 与 `*.prydwen.gg`，请求带浏览器 UA 与 Referer；解析失败原因会打印出来。脚本直接复用插件内置 `nikke_lib` 解析目标库路径。
 
