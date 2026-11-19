@@ -13,6 +13,7 @@
 | media-downloader | yt-dlp / gallery-dl 统一下载 + ASMR.ONE 管线 + 百度网盘加密中转（bdpan handoff） |
 | nikke-tracker | NIKKE 养成看板：海报墙、四部位词条编辑、洗条建议、主/副词条校核与头像上传；依赖 `skills/productivity/nikke-tracker` |
 | qbittorrent-manager | 从 Hermes 管理 qBittorrent 种子、标签与 RSS 规则 |
+| raw-shell | `/raw <命令>` 在网关宿主直接执行 shell（不经过 LLM）；本机终端始终允许，消息平台须配置用户白名单（`RAW_SHELL_ALLOWED_USERS` 或 `plugins.entries.raw-shell.settings.allowed_users`），失败即拒绝 |
 | vibeguard | 模型边界本地脱敏：站点、设备等敏感实体名映射为固定代号，证件号、手机号替换为随机假值，本地工具与最终答复时还原 |
 
 ## 仓库结构
@@ -33,6 +34,11 @@ hermes-plugin/
 ├── media-downloader/
 ├── nikke-tracker/          # 依赖 nikke-tracker 技能的 Dashboard 扩展
 ├── qbittorrent-manager/
+├── raw-shell/
+│   ├── plugin.yaml
+│   ├── __init__.py
+│   ├── README.md
+│   └── tests/
 └── vibeguard/
 ```
 

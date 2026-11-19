@@ -1,0 +1,21 @@
+name: raw-shell
+version: 1.0.1
+description: >-
+  /raw <command> — run a shell command with arguments directly on the gateway
+  host from any chat (Telegram, Discord, CLI, ...), without invoking the LLM.
+  Remote use is restricted to an allowlist of user ids
+  (plugins.entries.raw-shell.settings.allowed_users in config.yaml, or
+  RAW_SHELL_ALLOWED_USERS in the gateway environment).
+author: foreveruand
+requires_hermes: ">=0.22.3"
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+config_schema:
+  allowed_users:
+    type: array
+    items:
+      type: string
+    description: >-
+      User ids allowed to run /raw from messaging platforms. Merged with the
+      RAW_SHELL_ALLOWED_USERS environment variable.
