@@ -1,13 +1,16 @@
 # raw-shell — Hermes 插件
 
-在 Telegram（或 Discord、CLI 等任何会话）里发 `/raw <命令>`，直接在运行
-Hermes 网关的宿主机上执行该命令并返回输出，**不经过 LLM、不花 token、可以带任意参数**。
+在 Telegram（或 Discord、CLI 等任何会话）里发 `/raw <命令>`（同义命令 `/shell`），
+直接在运行 Hermes 网关的宿主机上执行该命令并返回输出，**不经过 LLM、不花 token、可以带任意参数**。
 
 ```
 /raw df -h
 /raw docker ps
-/raw systemctl status hermes-gateway
+/raw ls /var/log
 ```
+
+如果 `/raw` 看起来“参数没传进去”（例如 `/raw ls 某目录` 输出了别的东西或固定报错），
+见下面「命令名被 quick_commands 占用」一节，改用 `/shell` 即可绕开。
 
 ## 为什么是插件形态
 
@@ -23,44 +26,43 @@ Hermes 网关的宿主机上执行该命令并返回输出，**不经过 LLM、�
 2. 启用插件（二选一）：
    - 命令行：`hermes plugins enable raw-shell`
    - 或在 `~/.hermes/config.yaml` 的 `plugins.enabled` 列表里加上 `raw-shell`。
-3. 配置白名单（见下节），然后重启网关：`hermes gateway restart`
-   （也可以在聊天里发 `/gateway restart`）。
+3. 重启网关：`hermes gateway restart`（也可以在聊天里发 `/gateway restart`）。
 4. 可选自检：`hermes plugins doctor raw-shell`
 
 本插件要求 Hermes `>= 0.22.3`（命令上下文会提供 `platform` / `session_key` 等
 参数），旧版本不会加载。
 
-## 授权（重要）
+## 访问控制
 
-`/raw` 等于把宿主机 shell 挂到聊天上，授权是**失败即拒绝**的：
+插件本身**没有**用户白名单或身份校验：只要消息能到达网关——CLI、Telegram、
+Discord，或任何未知平台——`/raw` 就会执行。因此网关自身的访问控制就是唯一
+边界，请务必收紧：
 
-- **本机 CLI / TUI / Desktop / ACP**：始终允许。
-- **其它任何来源**（Telegram 等消息平台，以及缺失、为空或未知的 platform）：
-  一律按远端处理，只有发送者的用户 ID 在白名单里才执行。
-- 纵深防御：即使 platform 声称是本地，只要 `session_key` 里出现已知消息平台关键字，
-  也按远端处理。
+- 只配对/允许自己的账号，不要开 `GATEWAY_ALLOW_ALL_USERS`；
+- 不要把网关暴露给不受信任的群聊或多人账号。
 
-白名单是**并集**，两处都可以配，配了哪处都生效：
+`platform`、`session_key` 和发送者 ID 只写进日志，不参与放行判断。
 
-`~/.hermes/.env`（推荐，逗号或空格分隔）：
+## 命令名被 quick_commands 占用（/raw 收不到参数）
 
-```
-RAW_SHELL_ALLOWED_USERS=123456789
-```
-
-或 `config.yaml`（默认 profile 为 `~/.hermes/config.yaml`）：
+Hermes 的分发顺序是 **quick_commands → 插件命令 → bundles → skills**。
+如果 `config.yaml` 里还留着旧的 `raw` quick command：
 
 ```yaml
-plugins:
-  entries:
-    raw-shell:
-      settings:
-        allowed_users: ["123456789"]
+quick_commands:
+  raw:
+    type: exec
+    command: timeout 25 /bin/bash -c "$@"
 ```
 
-数字是你的 Telegram 用户 ID（不是 @用户名）。查自己的 ID 可以给
-@userinfobot 发任意消息。另外请确保网关本身只配对/允许你自己的账号
-（不要开 `GATEWAY_ALLOW_ALL_USERS`），这是第一道门，白名单是第二道。
+那么 `/raw ls 某目录` 会先命中这条 quick command，**插件根本收不到**；
+而 `type: exec` 的 quick command 不接收行尾参数（`$@` 永远是空的），
+表现就是“命令能跑、参数传不进去”。两处任选其一：
+
+1. 删掉整个 `quick_commands.raw`（`raw-shell` 就是用来替代它的），重启网关；
+2. 改用同义命令 `/shell ls 某目录`，它不走 `raw` 这个名字，不受影响。
+
+两个命令的作用、参数与超时行为完全一致。
 
 ## 行为细节
 
@@ -73,7 +75,7 @@ plugins:
 - 输出上限默认 3900 字符（`RAW_SHELL_MAX_CHARS` 可改），超了截断并注明总长——
   Telegram 单条消息上限 4096。
 - 非零退出码会在输出头部标 `(exit N)`；stdout 和 stderr 合并返回。
-- 每次执行和每次拒绝都会写网关日志（logger 名 `raw-shell`），含平台、用户 ID、命令前 200 字符。
+- 每次执行都会写网关日志（logger 名 `raw-shell`），含平台、session、发送者 ID 和命令前 200 字符；这些信息只用于日志。
 
 ## 卸载
 
