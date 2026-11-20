@@ -28,7 +28,7 @@ plugins:
     ref: 310b72862c02e707e53fc84b53ab6ddda524748f
     subdir: qbittorrent-manager
   - repo: foreveruand/hermes-plugin
-    ref: 1f48c02ba9bf93e371cc864382bea920efee984c
+    ref: 65d0c5f7d6e658a423b5215e0f366f5c276bc4d2
     subdir: raw-shell
   - repo: foreveruand/hermes-plugin
     ref: 310b72862c02e707e53fc84b53ab6ddda524748f
