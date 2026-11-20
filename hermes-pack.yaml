@@ -13,7 +13,7 @@ plugins:
     ref: 662311642d001bf0f9f384dfdd1150c80b653361
     subdir: airss
   - repo: foreveruand/hermes-plugin
-    ref: 310b72862c02e707e53fc84b53ab6ddda524748f
+    ref: 0279324f3856884fe60b7dbde74b2fdce1f1f93e
     subdir: audio-extract
   - repo: foreveruand/hermes-plugin
     ref: 310b72862c02e707e53fc84b53ab6ddda524748f
