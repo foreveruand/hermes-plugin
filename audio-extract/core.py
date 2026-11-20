@@ -148,6 +148,31 @@ def auto_extract_options(cfg: dict[str, Any]) -> dict[str, Any]:
     return opts
 
 
+# Guard for the periodic index scan. When a scan directory reports far fewer paths
+# than the index already holds, the walk almost certainly did not see the real tree:
+# an NFS mount with ``nofail`` keeps its (empty) mountpoint directory, so ``exists()``
+# is true and ``os.walk`` yields nothing while the share is down. Without this guard
+# that pass deletes the whole subtree from ``files`` and the next pass treats every
+# file in the library as brand new, re-queueing the entire library for extraction.
+INDEX_GUARD_DEFAULTS: dict[str, Any] = {
+    "enabled": True,
+    # Absolute floor: below this many indexed paths a shrinking scan is not suspicious
+    # (small libraries legitimately change a lot).
+    "min_records": 200,
+    # A scan that sees less than this fraction of the indexed paths is rejected.
+    "min_ratio": 0.5,
+}
+
+
+def index_guard_options(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the index-scan guard tunables merged over the built-in defaults."""
+    opts = dict(INDEX_GUARD_DEFAULTS)
+    raw = cfg.get("index_guard")
+    if isinstance(raw, dict):
+        opts.update({k: v for k, v in raw.items() if v is not None})
+    return opts
+
+
 def is_write_in_progress(path: Path) -> bool:
     """True when ``path`` still looks like an unfinished download or temporary write."""
     name = path.name
@@ -703,18 +728,30 @@ def sync_subtitles_once(cfg: dict[str, Any]) -> int:
     return processed_count
 
 
-def refresh_index(cfg: dict[str, Any], incremental: bool = True, track_new: bool = False) -> dict[str, Any]:
+def refresh_index(
+    cfg: dict[str, Any],
+    incremental: bool = True,
+    track_new: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
     """Scan scan_dirs and update SQLite file_index.db.
 
     With ``track_new`` the returned dict also carries ``new_files`` (paths that were
     absent from the index before this pass), which the periodic scan feeds into the
     auto-extraction planner. Tracking is opt-in so the index task's log stays small.
+
+    A scan directory that comes back with far fewer paths than the index records for
+    it (an unmounted NFS share, a soft-mount timeout) is skipped instead of pruned:
+    its rows are kept and its paths are not reported as new. ``force=True`` disables
+    that guard for a deliberate full rebuild.
     """
     db_path = cfg.get("db_path")
     scan_dirs = cfg.get("scan_dirs", [])
     exts = set(e.lower() for e in cfg.get("index_extensions", []))
     now = int(time.time())
     new_files: list[str] = []
+    guard = index_guard_options(cfg)
+    skipped: list[dict[str, Any]] = []
 
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -741,10 +778,14 @@ def refresh_index(cfg: dict[str, Any], incremental: bool = True, track_new: bool
     for scan_dir in scan_dirs:
         base = Path(scan_dir).expanduser().resolve()
         if not base.exists():
+            # Never prune on a missing share: without a walk there is nothing to compare.
+            skipped.append({"base_dir": str(base), "reason": "scan directory missing"})
+            logger.warning("Index scan skipped %s: directory missing", base)
             continue
         base_dir_str = str(base)
 
         batch = []
+        dir_new: list[str] = []
         scanned_paths: set[str] = set()
 
         for root, dirs, files in os.walk(base_dir_str):
@@ -780,7 +821,7 @@ def refresh_index(cfg: dict[str, Any], incremental: bool = True, track_new: bool
                         mtime = now
                     if not row:
                         if track_new:
-                            new_files.append(p)
+                            dir_new.append(p)
                         batch.append((p, f.lower(), 0, mtime))
                     elif row[0] != mtime:
                         batch.append((p, f.lower(), 0, mtime))
@@ -802,11 +843,45 @@ def refresh_index(cfg: dict[str, Any], incremental: bool = True, track_new: bool
         prefix = base_dir_str if base_dir_str.endswith(os.sep) else base_dir_str + os.sep
         cursor.execute("SELECT path FROM files WHERE path = ? OR path LIKE ?", (base_dir_str, prefix + "%"))
         db_paths = [r[0] for r in cursor.fetchall()]
+
+        # The index_meta row still holds the count from the last accepted scan; compare
+        # against it before trusting this walk enough to prune rows or report new files.
+        prev_row = cursor.execute(
+            "SELECT file_count FROM index_meta WHERE base_dir = ?", (base_dir_str,)
+        ).fetchone()
+        prev_count = int(prev_row[0]) if prev_row and prev_row[0] is not None else 0
+        min_records = int(guard["min_records"])
+        min_ratio = float(guard["min_ratio"])
+        suspicious = (
+            bool(guard["enabled"])
+            and not force
+            and prev_count >= min_records
+            and len(scanned_paths) < prev_count * min_ratio
+        )
+        if suspicious:
+            reason = (
+                f"scan saw {len(scanned_paths)} of {prev_count} indexed paths "
+                f"(< {min_ratio:.0%}): prune and new-file tracking skipped"
+            )
+            skipped.append(
+                {
+                    "base_dir": base_dir_str,
+                    "reason": reason,
+                    "indexed": prev_count,
+                    "scanned": len(scanned_paths),
+                }
+            )
+            logger.warning("Index scan rejected %s: %s", base_dir_str, reason)
+            total_scanned += len(scanned_paths)
+            continue
+
         to_delete = [(p,) for p in db_paths if p not in scanned_paths]
         if to_delete:
             cursor.executemany("DELETE FROM files WHERE path = ?", to_delete)
             conn.commit()
 
+        if track_new:
+            new_files.extend(dir_new)
         total_scanned += len(scanned_paths)
         cursor.execute(
             "REPLACE INTO index_meta VALUES (?, ?, ?)",
@@ -816,6 +891,8 @@ def refresh_index(cfg: dict[str, Any], incremental: bool = True, track_new: bool
 
     conn.close()
     result: dict[str, Any] = {"total_scanned": total_scanned, "updated": updated_records}
+    if skipped:
+        result["skipped"] = skipped
     if track_new:
         result["new_files"] = new_files
         result["new_count"] = len(new_files)

@@ -47,6 +47,16 @@ except ImportError:
     from tasks import list_recent_tasks, load_task, run_task_now, submit_task
 
 
+def _report_skipped(res: dict) -> None:
+    """Surface index-scan directories the shrink guard refused to trust.
+
+    Printed to stdout on purpose: the periodic cron job records stdout in its run log,
+    and a silently skipped share is exactly what an operator must see there.
+    """
+    for item in res.get("skipped") or []:
+        print(f"!! index scan skipped {item['base_dir']}: {item['reason']}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hermes Audio Extract & Video Clip Plugin CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -80,6 +90,7 @@ def main() -> None:
     # refresh-index
     p_ref = sub.add_parser("refresh-index", help="Refresh SQLite file index")
     p_ref.add_argument("--full", action="store_true", help="Perform full rebuild")
+    p_ref.add_argument("--force", action="store_true", help="Ignore the shrink guard (prune even a suspiciously small scan)")
 
     # scan
     p_scan = sub.add_parser(
@@ -90,6 +101,7 @@ def main() -> None:
     p_scan.add_argument("--no-queue", action="store_true", help="Only refresh the index")
     p_scan.add_argument("--settle-seconds", type=int, help="Override auto_extract.settle_seconds")
     p_scan.add_argument("--limit", type=int, help="Override auto_extract.max_per_scan")
+    p_scan.add_argument("--force", action="store_true", help="Ignore the shrink guard (prune even a suspiciously small scan)")
 
     # jobs
     p_jobs = sub.add_parser("jobs", help="List active pending jobs")
@@ -181,7 +193,8 @@ def main() -> None:
             print(f"Synced {cnt} subtitle task(s).")
 
     elif args.cmd == "refresh-index":
-        res = refresh_index(cfg, incremental=not args.full)
+        res = refresh_index(cfg, incremental=not args.full, force=args.force)
+        _report_skipped(res)
         print(f"Index refresh complete. Scanned: {res['total_scanned']}, Updated: {res['updated']}.")
 
     elif args.cmd == "scan":
@@ -194,8 +207,9 @@ def main() -> None:
                 auto["max_per_scan"] = args.limit
             scan_cfg["auto_extract"] = auto
 
-        res = refresh_index(scan_cfg, incremental=not args.full, track_new=True)
+        res = refresh_index(scan_cfg, incremental=not args.full, track_new=True, force=args.force)
         new_files = res.get("new_files", [])
+        _report_skipped(res)
         print(
             f"Index refresh complete. Scanned: {res['total_scanned']}, "
             f"Updated: {res['updated']}, New: {len(new_files)}."

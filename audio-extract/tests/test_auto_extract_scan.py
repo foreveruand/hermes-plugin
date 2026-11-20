@@ -69,6 +69,53 @@ def test_refresh_index_reports_only_new_files():
         assert "new_files" not in core.refresh_index(cfg)
 
 
+def test_refresh_index_rejects_scan_that_lost_the_share():
+    """An unmounted share must not prune the index nor advertise the library as new."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "lib"
+        files = [_touch(root / f"ep{i:02d}.mkv") for i in range(6)]
+        cfg = _cfg(td, scan_dirs=[str(root)], index_guard={"min_records": 3, "min_ratio": 0.5})
+        first = core.refresh_index(cfg, track_new=True)
+        assert len(first["new_files"]) == 6
+        assert "skipped" not in first
+
+        # Simulate the share dropping: the mountpoint still exists but walks empty.
+        for f in files:
+            f.unlink()
+        lossy = core.refresh_index(cfg, track_new=True)
+        assert lossy["new_files"] == []
+        assert lossy["skipped"] and lossy["skipped"][0]["indexed"] == 6
+        assert lossy["skipped"][0]["scanned"] == 0
+
+        # Rows survived, so a later scan that sees the tree again reports nothing new.
+        for f in files:
+            _touch(f)
+        recovered = core.refresh_index(cfg, track_new=True)
+        assert recovered["new_files"] == []
+        assert "skipped" not in recovered
+
+        # A deliberate rebuild can still prune.
+        for f in files:
+            f.unlink()
+        forced = core.refresh_index(cfg, track_new=True, force=True)
+        assert "skipped" not in forced
+
+
+def test_refresh_index_prunes_ordinary_deletions():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "lib"
+        keep = _touch(root / "keep.mkv")
+        gone = _touch(root / "gone.mkv")
+        cfg = _cfg(td, scan_dirs=[str(root)], index_guard={"min_records": 1, "min_ratio": 0.5})
+        core.refresh_index(cfg, track_new=True)
+
+        gone.unlink()
+        res = core.refresh_index(cfg, track_new=True)
+        assert "skipped" not in res
+        assert [Path(p).name for p in res["new_files"]] == []
+        assert keep.exists()
+
+
 def test_plan_skips_files_with_sidecars_and_existing_output():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "lib"

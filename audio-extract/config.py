@@ -94,6 +94,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Behaviour of the periodic index scan (scripts/refresh_media_index.sh):
     # newly indexed media without a subtitle/lyric sidecar is extracted for Whisper
     # once it looks fully written. See core.AUTO_EXTRACT_DEFAULTS.
+    # ``index_guard`` refuses to prune (or report new files for) a scan directory that
+    # comes back far smaller than the index says it should be -- an unmounted share
+    # would otherwise be wiped from the index and re-queued as brand new.
+    "index_guard": {
+        "enabled": True,
+        "min_records": 200,
+        "min_ratio": 0.5,
+    },
     "auto_extract": {
         "enabled": True,
         "format": "mp3",
@@ -145,7 +153,7 @@ def load_config(ctx: Any = None) -> dict[str, Any]:
 
     # 2. Context overrides if provided by Hermes plugin manager
     if ctx is not None and hasattr(ctx, "get_config"):
-        for key in ("out_dir", "scan_dirs", "db_path", "jobs_dir", "index_extensions", "tasks_dir", "record_dir", "auto_extract"):
+        for key in ("out_dir", "scan_dirs", "db_path", "jobs_dir", "index_extensions", "tasks_dir", "record_dir", "auto_extract", "index_guard"):
             val = ctx.get_config(key, None)
             if val is not None:
                 cfg[key] = val

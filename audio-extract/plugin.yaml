@@ -1,5 +1,5 @@
 name: audio-extract
-version: "1.2.1"
+version: "1.2.2"
 description: "Lossless video clipping, Whisper audio extraction, and subtitle sync for Hermes Agent."
 author: "custom"
 provides_tools:
@@ -33,3 +33,6 @@ config_schema:
   auto_extract:
     type: object
     description: "Periodic-scan auto extraction: enabled, format, settle_seconds (file must be untouched this long), sample_wait_seconds, batch_size, max_per_scan, max_seconds_per_scan (defer leftovers past this wall-clock cap), exclude_paths (directory prefixes never auto-extracted), delivery_target (e.g. telegram:123456 for completion briefings)"
+  index_guard:
+    type: object
+    description: "Index scan shrink guard: enabled, min_records (indexed paths below which shrinkage is tolerated), min_ratio (reject a scan that sees less than this fraction of the indexed paths). Prevents an unmounted share from being pruned and re-queued as new; bypass with --force."
