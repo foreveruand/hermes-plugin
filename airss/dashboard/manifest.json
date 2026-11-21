@@ -1,6 +1,6 @@
 {
   "api": "plugin_api.py",
-  "description": "airss 阅读展板：展板/订阅源/总结三页签，海报墙与列表、站内阅读；订阅完整配置（间隔、分组、关键词、Cookies、代理、总结/暂停）与分组排期/提示词均可查看修改，读写 airss 本地库",
+  "description": "airss 阅读展板：展板/订阅源/总结三页签，列表/卡片/杂志三视图，滚动自动已读、批量操作、文章翻译与注解、订阅显示/隐藏；订阅完整配置（间隔、分组、关键词、Cookies、代理、总结/暂停）与分组排期/提示词均可查看修改，读写 airss 本地库",
   "entry": "dist/index.js",
   "icon": "Rss",
   "label": "RSS 展板",
@@ -9,5 +9,5 @@
     "path": "/airss-board",
     "position": "after:skills"
   },
-  "version": "1.2.1"
+  "version": "1.3.0"
 }

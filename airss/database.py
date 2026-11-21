@@ -71,6 +71,42 @@ class Database:
             )
             """
         )
+        # 阅读器扩展表：文章注解、订阅翻译配置、翻译缓存。
+        # 与 board_state 一样由 airss 与 dashboard 两个进程懒建。
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_notes (
+                id INTEGER PRIMARY KEY,
+                article_id INTEGER NOT NULL,
+                note_text TEXT,
+                created_at TEXT,
+                UNIQUE(article_id)
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS translate_config (
+                subscription_id INTEGER PRIMARY KEY,
+                target_language TEXT,
+                auto_translate BOOLEAN DEFAULT 0,
+                created_at TEXT
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_translations (
+                id INTEGER PRIMARY KEY,
+                article_id INTEGER NOT NULL,
+                target_language TEXT NOT NULL,
+                translated_title TEXT,
+                translated_content TEXT,
+                created_at TEXT,
+                UNIQUE(article_id, target_language)
+            )
+            """
+        )
         await conn.commit()
         cursor = await conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='subscriptions'")
         if await cursor.fetchone():
@@ -81,6 +117,18 @@ class Database:
             if not await cursor.fetchone():
                 await conn.execute(
                     "ALTER TABLE board_state ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"
+                )
+                await conn.commit()
+            # 老库迁移：subscriptions 早期版本没有 visible_in_panel 列。
+            # 只控制面板展示，默认 1 保持现有订阅可见；Gateway 推送不受影响。
+            cursor = await conn.execute(
+                "SELECT name FROM pragma_table_info('subscriptions') "
+                "WHERE name = 'visible_in_panel'"
+            )
+            if not await cursor.fetchone():
+                await conn.execute(
+                    "ALTER TABLE subscriptions "
+                    "ADD COLUMN visible_in_panel INTEGER NOT NULL DEFAULT 1"
                 )
                 await conn.commit()
             self._initialized = True
@@ -102,7 +150,8 @@ class Database:
                 error_count INTEGER DEFAULT 0,
                 last_fetch TEXT DEFAULT NULL,
                 etag TEXT DEFAULT NULL,
-                last_modified TEXT DEFAULT NULL
+                last_modified TEXT DEFAULT NULL,
+                visible_in_panel INTEGER NOT NULL DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS articles (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -338,6 +387,20 @@ class Database:
     async def delete_subscription(self, sub_id: int) -> None:
         async with self._acquire() as conn:
             await conn.execute("DELETE FROM subscribers WHERE subscription_id = ?", (sub_id,))
+            # 清理阅读器扩展数据，避免删除订阅后残留注解/译文
+            await conn.execute(
+                "DELETE FROM article_notes WHERE article_id IN "
+                "(SELECT id FROM articles WHERE subscription_id = ?)",
+                (sub_id,),
+            )
+            await conn.execute(
+                "DELETE FROM article_translations WHERE article_id IN "
+                "(SELECT id FROM articles WHERE subscription_id = ?)",
+                (sub_id,),
+            )
+            await conn.execute(
+                "DELETE FROM translate_config WHERE subscription_id = ?", (sub_id,)
+            )
             await conn.execute("DELETE FROM articles WHERE subscription_id = ?", (sub_id,))
             await conn.execute("DELETE FROM subscriptions WHERE id = ?", (sub_id,))
             await conn.commit()
@@ -774,6 +837,17 @@ class Database:
                 """,
                 (cutoff,),
             )
+            for table in ("article_notes", "article_translations"):
+                await conn.execute(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE article_id IN (
+                        SELECT id FROM articles
+                        WHERE COALESCE(published_at, fetched_at) < ?
+                    )
+                    """,
+                    (cutoff,),
+                )
             cursor = await conn.execute(
                 "DELETE FROM articles WHERE COALESCE(published_at, fetched_at) < ?",
                 (cutoff,),

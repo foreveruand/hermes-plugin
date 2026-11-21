@@ -111,7 +111,7 @@
       name: "", url: "", interval: 5, source_group_id: 1,
       cookies: "", black_keyword: "", content_to_remove: "",
       max_image_number: 0, ai_summary_enabled: false,
-      enable_proxy: false, stop: false,
+      enable_proxy: false, stop: false, visible_in_panel: true,
     };
   }
 
@@ -128,6 +128,7 @@
       ai_summary_enabled: !!sub.ai_summary_enabled,
       enable_proxy: !!sub.enable_proxy,
       stop: !!sub.stop,
+      visible_in_panel: sub.visible_in_panel !== false,
     };
   }
 
@@ -252,7 +253,454 @@
       padding: "8px 10px", borderRadius: 8, fontSize: 13,
       border: "1px solid rgba(60,160,80,.45)", background: "rgba(60,160,80,.12)",
     },
+    magazineGrid: {
+      display: "grid", gap: 16,
+      gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))",
+    },
+    magazineCard: {
+      border: "1px solid rgba(127,127,127,.3)", borderRadius: 10, overflow: "hidden",
+      cursor: "pointer", display: "flex", gap: 0, minHeight: 132,
+      transition: "border-color .15s ease, background .15s ease",
+    },
+    magazineImg: {
+      width: 132, height: "100%", minHeight: 132, objectFit: "cover",
+      flexShrink: 0, display: "block",
+    },
+    check: {
+      width: 16, height: 16, cursor: "pointer", flexShrink: 0,
+      accentColor: "#5b8def", marginTop: 2,
+    },
+    selectedCard: {
+      border: "1px solid rgba(80,140,220,.9)",
+      background: "rgba(80,140,220,.10)",
+    },
+    batchBar: {
+      display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+      padding: "8px 10px", marginBottom: 10, borderRadius: 10,
+      border: "1px solid rgba(80,140,220,.55)", background: "rgba(80,140,220,.12)",
+    },
+    badgeSoft: {
+      fontSize: 11, padding: "1px 7px", borderRadius: 999,
+      background: "rgba(127,127,127,.18)", border: "1px solid rgba(127,127,127,.45)",
+    },
+    badgeTrans: {
+      fontSize: 11, padding: "1px 7px", borderRadius: 999,
+      background: "rgba(60,160,80,.20)", border: "1px solid rgba(60,160,80,.60)",
+    },
+    sectionBox: {
+      marginTop: 14, padding: "10px 12px", borderRadius: 10,
+      border: "1px solid rgba(127,127,127,.3)",
+      display: "flex", flexDirection: "column", gap: 8,
+    },
+    sectionTitle: { fontSize: 13, fontWeight: 700 },
+    smallSelect: {
+      padding: "4px 8px", borderRadius: 8, fontSize: 13,
+      background: "transparent", color: "inherit",
+      border: "1px solid rgba(127,127,127,.4)",
+    },
   };
+
+  var VIEW_MODES = [["list", "列表"], ["card", "卡片"], ["magazine", "杂志"]];
+  var LANGUAGES = [
+    ["zh-CN", "简体中文"], ["zh-TW", "繁體中文"], ["en", "English"],
+    ["ja", "日本語"], ["ko", "한국어"], ["fr", "Français"],
+    ["de", "Deutsch"], ["es", "Español"], ["ru", "Русский"],
+  ];
+
+  function readStored(key, fallback) {
+    try {
+      var v = window.localStorage.getItem(key);
+      return v || fallback;
+    } catch (e) { return fallback; }
+  }
+
+  function writeStored(key, value) {
+    try { window.localStorage.setItem(key, value); } catch (e) {}
+  }
+
+  function isTypingTarget(target) {
+    if (!target) return false;
+    var tag = String(target.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || !!target.isContentEditable;
+  }
+
+  function langLabel(code) {
+    for (var i = 0; i < LANGUAGES.length; i++) {
+      if (LANGUAGES[i][0] === code) return LANGUAGES[i][1];
+    }
+    return code || "简体中文";
+  }
+
+  /* 列表 / 卡片 / 杂志 三视图切换 */
+  function ViewToggle(props) {
+    return el("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      VIEW_MODES.map(function (m) {
+        return el("button", {
+          key: m[0],
+          style: Object.assign({}, S.chip, props.value === m[0] ? S.chipOn : null),
+          onClick: function () { props.onChange(m[0]); },
+          title: "切换到" + m[1] + "视图",
+        }, m[1]);
+      })
+    );
+  }
+
+  /* 订阅是否在面板显示（只影响展板，不影响推送） */
+  function SubscriptionVisibilityToggle(props) {
+    var visible = props.visible !== false;
+    return el("button", {
+      style: Object.assign({}, S.switchBtn, visible ? S.switchOn : null),
+      title: visible ? "在展板显示该订阅的文章" : "已在展板隐藏，点击恢复显示",
+      onClick: props.onToggle,
+    }, visible ? "面板 · 显示" : "面板 · 隐藏");
+  }
+
+  /* 批量操作菜单：标记已读 / 未读 / 翻译所选 */
+  function BatchActionsMenu(props) {
+    return el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+      el("button", {
+        style: S.btn, disabled: props.busy,
+        onClick: props.onMarkRead,
+      }, "标记已读"),
+      el("button", {
+        style: S.btn, disabled: props.busy,
+        onClick: props.onMarkUnread,
+      }, "标记未读"),
+      el("select", {
+        style: S.smallSelect, value: props.lang,
+        onChange: function (e) { props.onLangChange(e.target.value); },
+        disabled: props.busy,
+      }, LANGUAGES.map(function (l) {
+        return el("option", { key: l[0], value: l[0] }, l[1]);
+      })),
+      el("button", {
+        style: S.btn, disabled: props.busy,
+        onClick: function () { props.onTranslate(props.lang); },
+      }, props.busy && props.progress
+        ? "翻译中 " + props.progress.done + "/" + props.progress.total
+        : "翻译所选"),
+      el("button", { style: S.btn, onClick: props.onClear, disabled: props.busy }, "取消选择")
+    );
+  }
+
+  /* 翻译面板：语言选择 + 触发翻译 + 原文/译文切换 */
+  function TranslatePanel(props) {
+    var opts = LANGUAGES.slice();
+    var has = false;
+    for (var i = 0; i < opts.length; i++) if (opts[i][0] === props.lang) has = true;
+    if (!has && props.lang) opts.unshift([props.lang, props.lang]);
+    return el("div", { style: S.sectionBox },
+      el("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+        el("span", { style: S.sectionTitle }, "翻译"),
+        el("select", {
+          style: S.smallSelect, value: props.lang,
+          onChange: function (e) { props.onLangChange(e.target.value); },
+          disabled: props.busy,
+        }, opts.map(function (l) {
+          return el("option", { key: l[0], value: l[0] }, l[1]);
+        })),
+        el("button", {
+          style: S.btn, disabled: props.busy,
+          onClick: function () { props.onTranslate(props.lang); },
+        }, props.busy ? "翻译中…" : "翻译本文"),
+        props.result ? el("button", {
+          style: S.btn,
+          onClick: props.onToggleOriginal,
+        }, props.showOriginal ? "查看译文" : "查看原文") : null,
+        props.result ? el("span", { style: S.badgeTrans },
+          (props.result.cached ? "已缓存 · " : "已翻译 · ") + langLabel(props.result.target_language || props.lang)) : null
+      ),
+      props.error ? el("div", { style: S.notice }, props.error) : null
+    );
+  }
+
+  /* 注解编辑器（文章弹层内展开） */
+  function NotesEditor(props) {
+    if (!props.open) {
+      return el("div", { style: S.sectionBox },
+        el("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+          el("span", { style: S.sectionTitle }, "我的注解"),
+          el("button", { style: S.btn, onClick: props.onToggle },
+            props.hasNote ? "查看 / 编辑注解" : "添加注解"),
+          props.savedAt ? el("span", { style: S.badgeSoft }, "已保存") : null
+        ),
+        props.hasNote ? el("div", { style: { fontSize: 13, lineHeight: 1.6, opacity: 0.85 } },
+          props.text.length > 180 ? props.text.slice(0, 180) + "…" : props.text) : null
+      );
+    }
+    return el("div", { style: S.sectionBox },
+      el("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+        el("span", { style: S.sectionTitle }, "我的注解"),
+        el("span", { style: S.note }, "Ctrl/⌘ + Enter 保存")
+      ),
+      el("textarea", {
+        style: Object.assign({}, S.textarea, { minHeight: 96 }),
+        value: props.text,
+        placeholder: "写点什么，例如为什么收藏、待跟进的事项…",
+        autoFocus: true,
+        onChange: function (e) { props.onChange(e.target.value); },
+        onKeyDown: function (e) {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            props.onSave();
+          }
+        },
+      }),
+      el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        el("button", { style: S.btn, disabled: props.busy, onClick: props.onSave },
+          props.busy ? "保存中…" : "保存注解"),
+        el("button", { style: S.btn, disabled: props.busy, onClick: props.onClear }, "删除注解"),
+        el("button", { style: S.btn, onClick: props.onToggle }, "收起")
+      )
+    );
+  }
+
+  /* 文章阅读弹层：正文 + 翻译 + 注解 + 上下篇 */
+  function ArticleOverlay(props) {
+    var current = props.current;
+    var detail = props.detail && props.detail.id === current.id ? props.detail : current;
+    var detailLoaded = !!(props.detail && props.detail.id === current.id);
+
+    var langState = useState(props.defaultLang || "zh-CN");
+    var lang = langState[0], setLang = langState[1];
+    var trState = useState(function () {
+      var c = props.translationCache && props.translationCache[current.id];
+      return c || null;
+    });
+    var tr = trState[0], setTr = trState[1];
+    var busyState = useState(false);
+    var busy = busyState[0], setBusy = busyState[1];
+    var errState = useState("");
+    var trErr = errState[0], setTrErr = errState[1];
+    var origState = useState(false);
+    var showOriginal = origState[0], setShowOriginal = origState[1];
+
+    var notesCacheItem = (props.notesCache && props.notesCache[current.id]) || null;
+    var noteTextState = useState(notesCacheItem ? (notesCacheItem.note_text || "") : "");
+    var noteText = noteTextState[0], setNoteText = noteTextState[1];
+    var noteSavedState = useState(notesCacheItem ? (notesCacheItem.created_at || null) : null);
+    var noteSavedAt = noteSavedState[0], setNoteSavedAt = noteSavedState[1];
+    var noteOpenState = useState(false);
+    var noteOpen = noteOpenState[0], setNoteOpen = noteOpenState[1];
+    var noteBusyState = useState(false);
+    var noteBusy = noteBusyState[0], setNoteBusy = noteBusyState[1];
+    var noteMsgState = useState("");
+    var noteMsg = noteMsgState[0], setNoteMsg = noteMsgState[1];
+
+    var box = useState(function () { return { current: {} }; })[0];
+
+    function applyTranslation(out) {
+      setTr(out);
+      setShowOriginal(false);
+      if (props.onTranslation) props.onTranslation(current.id, out);
+    }
+
+    function doTranslate(target) {
+      var language = target || lang;
+      setBusy(true);
+      setTrErr("");
+      postJSON(API + "/articles/" + current.id + "/translate", {
+        target_language: language,
+      })
+        .then(function (d) {
+          applyTranslation({
+            target_language: d.target_language || language,
+            translated_title: d.translated_title || "",
+            translated_content: d.translated_content || "",
+            cached: !!d.cached,
+          });
+        })
+        .catch(function (e) {
+          setTrErr("翻译失败：" + (e && e.message ? e.message : e));
+        })
+        .then(function () { setBusy(false); });
+    }
+
+    function saveNote() {
+      setNoteBusy(true);
+      setNoteMsg("");
+      postJSON(API + "/articles/" + current.id + "/notes", { note_text: noteText })
+        .then(function (d) {
+          setNoteText(d.note_text || "");
+          setNoteSavedAt(d.created_at || null);
+          setNoteMsg(d.deleted ? "注解已删除" : "注解已保存");
+          if (props.onNoteSaved) {
+            props.onNoteSaved(current.id, {
+              note_text: d.note_text || "",
+              created_at: d.created_at || null,
+            });
+          }
+        })
+        .catch(function (e) {
+          setNoteMsg("保存失败：" + (e && e.message ? e.message : e));
+        })
+        .then(function () { setNoteBusy(false); });
+    }
+
+    function clearNote() {
+      setNoteText("");
+      saveNote();
+    }
+
+    box.current.translate = function () { doTranslate(lang); };
+    box.current.toggleNotes = function () { setNoteOpen(function (v) { return !v; }); };
+
+    useEffect(function () {
+      var cached = props.notesCache && props.notesCache[current.id];
+      if (!cached) {
+        fetchJSON(API + "/articles/" + current.id + "/notes")
+          .then(function (d) {
+            setNoteText(d.note_text || "");
+            setNoteSavedAt(d.created_at || null);
+            if (props.onNoteSaved) {
+              props.onNoteSaved(current.id, {
+                note_text: d.note_text || "",
+                created_at: d.created_at || null,
+              });
+            }
+          })
+          .catch(function () {});
+      }
+      // 订阅级翻译配置：自动翻译 + 默认目标语言
+      if (current.subscription_id) {
+        fetchJSON(API + "/subscriptions/" + current.subscription_id + "/translate-config")
+          .then(function (cfg) {
+            if (!cfg) return;
+            if (cfg.target_language) {
+              setLang(cfg.target_language);
+              if (props.onLangChange) props.onLangChange(cfg.target_language);
+            }
+            var already = props.translationCache && props.translationCache[current.id];
+            if (cfg.auto_translate && !already) {
+              doTranslate(cfg.target_language || lang);
+            }
+          })
+          .catch(function () {});
+      }
+      function onKey(e) {
+        if (isTypingTarget(e.target)) return;
+        var k = String(e.key || "").toLowerCase();
+        if (k === "escape") props.onClose();
+        else if (k === "t") box.current.translate && box.current.translate();
+        else if (k === "n") box.current.toggleNotes && box.current.toggleNotes();
+      }
+      window.addEventListener("keydown", onKey);
+      return function () {
+        window.removeEventListener("keydown", onKey);
+      };
+    }, []);
+
+    var showingTr = !!(tr && !showOriginal);
+    var title = showingTr && tr.translated_title ? tr.translated_title : (detail.title || "(无标题)");
+    var images = detailLoaded && detail.image_urls && detail.image_urls.length
+      ? detail.image_urls
+      : (current.image ? [current.image] : []);
+    var content = "";
+    if (showingTr) content = tr.translated_content || "";
+    else if (detailLoaded) content = detail.content || "";
+
+    var kids = [
+      el("div", {
+        key: "hd",
+        style: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
+      },
+        el("h2", { style: { fontSize: 19, lineHeight: 1.45, margin: 0 } }, title),
+        el("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
+          props.onPrev ? el("button", {
+            style: S.btn, onClick: props.onPrev, title: "上一篇（K）",
+          }, "上一页") : null,
+          props.onNext ? el("button", {
+            style: S.btn, onClick: props.onNext, title: "下一篇（J）",
+          }, "下一页") : null,
+          el("button", { style: S.btn, onClick: props.onClose }, "关闭")
+        )
+      ),
+      el("div", { key: "mt", style: Object.assign({}, S.metaLine, { marginTop: 8 }) },
+        el("span", null, detail.subscription_name || ""),
+        detail.author ? el("span", null, detail.author) : null,
+        el("span", null, fmtTime(detail)),
+        detail.ai_filter_result === 0 ? el("span", { style: S.aiBadge }, "AI 已过滤") : null,
+        showingTr ? el("span", { style: S.badgeTrans }, "译文 · " + langLabel(tr.target_language || lang)) : null,
+        noteText ? el("span", { style: S.badgeSoft }, "有注解") : null
+      ),
+    ];
+
+    images.forEach(function (src, i) {
+      kids.push(el("img", {
+        key: "im" + i, src: src, alt: "", loading: "lazy",
+        style: { width: "100%", height: "auto", display: "block", borderRadius: 8, marginTop: 12 },
+      }));
+    });
+
+    if (detailLoaded) {
+      if (content) {
+        kids.push(el("div", {
+          key: "ct",
+          style: { marginTop: 14, lineHeight: 1.7, wordBreak: "break-word" },
+          dangerouslySetInnerHTML: { __html: content },
+        }));
+      } else {
+        kids.push(el("p", { key: "nc", style: { marginTop: 14, opacity: 0.7 } },
+          showingTr
+            ? "译文为空，试试重新翻译。"
+            : "这个源没有给正文，点下方「在浏览器打开原文」看全文。"));
+      }
+    } else {
+      kids.push(el("p", { key: "ld", style: { marginTop: 14, opacity: 0.7 } }, "正文加载中…"));
+    }
+
+    kids.push(el(TranslatePanel, {
+      key: "tr",
+      lang: lang,
+      onLangChange: function (v) {
+        setLang(v);
+        if (props.onLangChange) props.onLangChange(v);
+      },
+      onTranslate: doTranslate,
+      busy: busy,
+      error: trErr,
+      result: tr,
+      showOriginal: showOriginal,
+      onToggleOriginal: function () { setShowOriginal(function (v) { return !v; }); },
+    }));
+
+    kids.push(el(NotesEditor, {
+      key: "nt",
+      open: noteOpen,
+      text: noteText,
+      busy: noteBusy,
+      hasNote: !!noteText,
+      savedAt: noteSavedAt,
+      onChange: setNoteText,
+      onSave: saveNote,
+      onClear: clearNote,
+      onToggle: function () { setNoteOpen(function (v) { return !v; }); },
+    }));
+    if (noteMsg) {
+      kids.push(el("div", { key: "nm", style: S.note }, noteMsg));
+    }
+
+    kids.push(el("div", { key: "fb", style: { marginTop: 16 } },
+      props.renderActions ? props.renderActions(detail) : null));
+    kids.push(el("div", {
+      key: "ft",
+      style: { display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" },
+    },
+      detail.link
+        ? el("a", {
+            href: detail.link, target: "_blank", rel: "noreferrer",
+            style: Object.assign({}, S.btn, { textDecoration: "none", display: "inline-block" }),
+          }, "在浏览器打开原文")
+        : null,
+      el("span", { style: S.note }, "快捷键：T 翻译 · N 注解 · J/K 上下篇 · Esc 关闭"),
+      el("button", { style: S.btn, onClick: props.onClose }, "关闭")
+    ));
+
+    return el("div", {
+      style: S.overlayBg,
+      onClick: function (e) { if (e.target === e.currentTarget) props.onClose(); },
+    }, el("div", { style: S.panel }, kids));
+  }
 
   function BoardPage() {
     var tabState = useState("board"); // board | subs | summary
@@ -269,8 +717,26 @@
 
     var viewState = useState("unread");
     var view = viewState[0], setView = viewState[1];
-    var layoutState = useState("grid");
+    var layoutState = useState(readStored("airss.viewMode", "card"));
     var layout = layoutState[0], setLayout = layoutState[1];
+    var transLangState = useState(readStored("airss.translateLang", "zh-CN"));
+    var transLang = transLangState[0], setTransLang = transLangState[1];
+
+    /* ---- 批量选择 / 翻译缓存 / 注解缓存 ---- */
+    var selectedState = useState([]);
+    var selected = selectedState[0], setSelected = selectedState[1];
+    var transCacheState = useState({});
+    var transCache = transCacheState[0], setTransCache = transCacheState[1];
+    var notesCacheState = useState({});
+    var notesCache = notesCacheState[0], setNotesCache = notesCacheState[1];
+    var batchBusyState = useState(false);
+    var batchBusy = batchBusyState[0], setBatchBusy = batchBusyState[1];
+    var batchProgState = useState(null);
+    var batchProgress = batchProgState[0], setBatchProgress = batchProgState[1];
+    var expandState = useState(null);
+    var expandedId = expandState[0], setExpandedId = expandState[1];
+    var expandBodyState = useState({});
+    var expandBody = expandBodyState[0], setExpandBody = expandBodyState[1];
     var groupState = useState(null);
     var groupId = groupState[0], setGroupId = groupState[1];
     var subState = useState(null);
@@ -314,6 +780,8 @@
     var newDraft = newDraftState[0], setNewDraft = newDraftState[1];
     var saveBusyState = useState(false);
     var saveBusy = saveBusyState[0], setSaveBusy = saveBusyState[1];
+    var subTransState = useState({ target_language: "zh-CN", auto_translate: false });
+    var subTrans = subTransState[0], setSubTrans = subTransState[1];
     var msgState = useState(null); // { kind: "ok"|"err", text: string }
     var msg = msgState[0], setMsg = msgState[1];
 
@@ -328,11 +796,12 @@
     var groupNew = groupNewState[0], setGroupNew = groupNewState[1];
 
     // 给观察器用的可变引用盒（避免闭包抓到旧 state）
-    var refBox = useState(function () { return { current: {} }; })[0];
+    var refBox = useState(function () { return { current: { scrollRead: {} } }; })[0];
     refBox.current.items = items;
     refBox.current.view = view;
     refBox.current.total = total;
     refBox.current.loading = loading;
+    if (!refBox.current.scrollRead) refBox.current.scrollRead = {};
 
     function loadMeta() {
       return fetchJSON(API + "/board/meta")
@@ -394,8 +863,12 @@
           var list = d.items || [];
           setTotal(d.total || 0);
           setOffset(useOff + list.length);
-          if (reset) setItems(list);
-          else setItems(function (prev) { return prev.concat(list); });
+          if (reset) {
+            setItems(list);
+            setSelected([]);
+          } else {
+            setItems(function (prev) { return prev.concat(list); });
+          }
         })
         .catch(function (e) {
           setLoadErr("加载失败：" + (e && e.message ? e.message : e));
@@ -473,6 +946,73 @@
       obs.observe(node);
       return function () { obs.disconnect(); if (timer) clearTimeout(timer); };
     }, [tab, view, items.length]);
+
+    /* ---- 滚动标记已读：文章完全滚过视口顶部后批量标已读 ----
+       与「停在底部」逻辑互补：用户一路向下滚，读过的文章离开屏幕上方时
+       自动调用 /articles/batch-mark-read；同一篇只触发一次。 ---- */
+    useEffect(function () {
+      if (tab !== "board" || typeof IntersectionObserver === "undefined") return;
+      var cards = document.querySelectorAll("[data-airss-card]");
+      if (!cards.length) return;
+      var pending = {};
+      var timer = null;
+
+      function flush() {
+        timer = null;
+        var ids = Object.keys(pending).map(Number);
+        pending = {};
+        if (!ids.length) return;
+        postJSON(API + "/articles/batch-mark-read", { article_ids: ids, read: true })
+          .then(function () {
+            applyReadLocal(ids, true);
+            // 用后端计数校正本地乐观更新（可能和底部自动已读重叠）
+            loadMeta();
+          })
+          .catch(function () {
+            // 失败时允许下次滚动重试
+            ids.forEach(function (id) { delete refBox.current.scrollRead[id]; });
+          });
+      }
+
+      var obs = new IntersectionObserver(function (entries) {
+        for (var i = 0; i < entries.length; i++) {
+          var en = entries[i];
+          if (en.isIntersecting) continue;
+          var rect = en.boundingClientRect;
+          if (!rect || rect.bottom > 0) continue;
+          var id = Number(en.target.getAttribute("data-airss-card"));
+          if (!id || refBox.current.scrollRead[id]) continue;
+          var it = null;
+          var list = refBox.current.items || [];
+          for (var j = 0; j < list.length; j++) {
+            if (list[j].id === id) { it = list[j]; break; }
+          }
+          refBox.current.scrollRead[id] = true;
+          if (it && !it.read) pending[id] = true;
+        }
+        if (Object.keys(pending).length && !timer) {
+          timer = setTimeout(flush, 500);
+        }
+      }, { threshold: 0 });
+      Array.prototype.forEach.call(cards, function (card) { obs.observe(card); });
+      return function () {
+        obs.disconnect();
+        if (timer) clearTimeout(timer);
+      };
+    }, [tab, items.length, layout, view, groupId, subId, query]);
+
+    /* ---- 快捷键 J/K 切换上下篇（T/N 在阅读弹层内处理） ---- */
+    useEffect(function () {
+      if (tab !== "board") return;
+      function onKey(e) {
+        if (isTypingTarget(e.target)) return;
+        var k = String(e.key || "").toLowerCase();
+        if (k === "j") { e.preventDefault(); navigate(1); }
+        else if (k === "k") { e.preventDefault(); navigate(-1); }
+      }
+      window.addEventListener("keydown", onKey);
+      return function () { window.removeEventListener("keydown", onKey); };
+    }, [tab, items, current]);
 
     /* ---- 就地更新（反馈/已读/收藏共用），不重拉列表 ---- */
     function patchItem(id, patch) {
@@ -555,6 +1095,159 @@
 
     function onRefresh() { loadMeta(); loadItems(true); }
 
+    /* ---- 批量选择与批量操作 ---- */
+    function toggleSelect(id, ev) {
+      if (ev) ev.stopPropagation();
+      setSelected(function (prev) {
+        var idx = prev.indexOf(id);
+        if (idx >= 0) {
+          var next = prev.slice();
+          next.splice(idx, 1);
+          return next;
+        }
+        return prev.concat([id]);
+      });
+    }
+
+    function clearSelection() { setSelected([]); }
+
+    /* 列表视图内联展开：按需拉完整正文，不打开弹层 */
+    function toggleExpand(item, ev) {
+      if (ev) ev.stopPropagation();
+      if (expandedId === item.id) {
+        setExpandedId(null);
+        return;
+      }
+      setExpandedId(item.id);
+      if (expandBody[item.id] !== undefined) return;
+      fetchJSON(API + "/articles/" + item.id + "/full-content")
+        .then(function (d) {
+          setExpandBody(function (prev) {
+            var next = Object.assign({}, prev);
+            next[item.id] = d && d.content ? d.content : "";
+            return next;
+          });
+        })
+        .catch(function () {
+          setExpandBody(function (prev) {
+            var next = Object.assign({}, prev);
+            next[item.id] = "";
+            return next;
+          });
+        });
+    }
+
+    function applyReadLocal(ids, read) {
+      var picked = {};
+      ids.forEach(function (id) { picked[id] = true; });
+      setItems(function (prev) {
+        return prev.map(function (it) {
+          return picked[it.id] ? Object.assign({}, it, { read: read }) : it;
+        });
+      });
+      setCurrent(function (cur) {
+        return cur && picked[cur.id] ? Object.assign({}, cur, { read: read }) : cur;
+      });
+      setDetail(function (det) {
+        return det && picked[det.id] ? Object.assign({}, det, { read: read }) : det;
+      });
+      setCounts(function (c) {
+        var delta = read ? -ids.length : ids.length;
+        return Object.assign({}, c, {
+          unread: Math.max(0, (c.unread || 0) + delta),
+        });
+      });
+    }
+
+    function batchSetRead(read) {
+      var ids = selected.slice();
+      if (!ids.length) return;
+      setMsg(null);
+      postJSON(API + "/articles/batch-mark-read", { article_ids: ids, read: read })
+        .then(function (d) {
+          applyReadLocal(ids, read);
+          clearSelection();
+          okMessage((read ? "已标记已读 " : "已标记未读 ") +
+            (d && d.count != null ? d.count : ids.length) + " 篇");
+          loadMeta();
+        })
+        .catch(function (e) {
+          configMessage("批量操作失败：" + (e && e.message ? e.message : e));
+        });
+    }
+
+    function cacheTranslation(id, payload) {
+      setTransCache(function (prev) {
+        var next = Object.assign({}, prev);
+        next[id] = payload;
+        return next;
+      });
+    }
+
+    function cacheNote(id, payload) {
+      setNotesCache(function (prev) {
+        var next = Object.assign({}, prev);
+        next[id] = payload;
+        return next;
+      });
+    }
+
+    function batchTranslate(lang) {
+      var ids = selected.slice();
+      if (!ids.length) return;
+      setMsg(null);
+      setBatchBusy(true);
+      setBatchProgress({ done: 0, total: ids.length });
+      var done = 0;
+      var failed = 0;
+      function step(i) {
+        if (i >= ids.length) {
+          setBatchBusy(false);
+          setBatchProgress(null);
+          var text = "批量翻译完成：成功 " + (ids.length - failed) + " 篇" +
+            (failed ? "，失败 " + failed + " 篇" : "");
+          if (failed) configMessage(text); else okMessage(text);
+          clearSelection();
+          return;
+        }
+        postJSON(API + "/articles/" + ids[i] + "/translate", {
+          target_language: lang,
+        })
+          .then(function (d) {
+            cacheTranslation(ids[i], {
+              target_language: d.target_language || lang,
+              translated_title: d.translated_title || "",
+              translated_content: d.translated_content || "",
+              cached: !!d.cached,
+            });
+          })
+          .catch(function () { failed += 1; })
+          .then(function () {
+            done += 1;
+            setBatchProgress({ done: done, total: ids.length });
+            step(i + 1);
+          });
+      }
+      step(0);
+    }
+
+    /* ---- 上/下篇导航（J/K） ---- */
+    function currentIndex() {
+      if (!current) return -1;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].id === current.id) return i;
+      }
+      return -1;
+    }
+
+    function navigate(delta) {
+      if (!items.length) return;
+      var idx = currentIndex();
+      var next = idx < 0 ? (delta > 0 ? 0 : items.length - 1) : idx + delta;
+      if (next < 0 || next >= items.length) return;
+      openItem(items[next]);
+    }
+
     /* ---- 订阅配置（订阅源 / 总结 两页共用同一份状态） ---- */
     function patchSub(id, patch) {
       setSubs(function (prev) {
@@ -632,11 +1325,38 @@
         .catch(function (e) { configMessage("保存设置失败：" + e.message); });
     }
 
+    function onToggleVisibility(sub, ev) {
+      if (ev) ev.stopPropagation();
+      var next = sub.visible_in_panel === false;
+      setMsg(null);
+      requestJSON("PUT", API + "/subscriptions/" + sub.id + "/visibility", {
+        visible_in_panel: next,
+      })
+        .then(function () {
+          patchSub(sub.id, { visible_in_panel: next });
+          if (!next && subId === sub.id) setSubId(null);
+          okMessage((next ? "已恢复" : "已隐藏") + "「" + (sub.name || "订阅") + "」在展板的显示");
+          refreshConfig();
+          loadItems(true);
+        })
+        .catch(function (e) { configMessage("保存显示开关失败：" + e.message); });
+    }
+
     function beginEditSub(sub) {
       setEditId(sub.id);
       setDraft(draftFromSub(sub));
       setAdding(false);
       setMsg(null);
+      setSubTrans({ target_language: "zh-CN", auto_translate: false });
+      fetchJSON(API + "/subscriptions/" + sub.id + "/translate-config")
+        .then(function (cfg) {
+          if (!cfg) return;
+          setSubTrans({
+            target_language: cfg.target_language || "zh-CN",
+            auto_translate: !!cfg.auto_translate,
+          });
+        })
+        .catch(function () {});
     }
 
     function closeEditor() {
@@ -644,6 +1364,7 @@
       setDraft(null);
       setAdding(false);
       setNewDraft(emptySubDraft());
+      setSubTrans({ target_language: "zh-CN", auto_translate: false });
     }
 
     function setDraftField(key, value) {
@@ -663,7 +1384,15 @@
         ai_summary_enabled: !!d.ai_summary_enabled,
         enable_proxy: !!d.enable_proxy,
         stop: !!d.stop,
+        visible_in_panel: d.visible_in_panel !== false,
       };
+    }
+
+    function saveTranslateConfig(subId) {
+      return requestJSON("PUT", API + "/subscriptions/" + subId + "/translate-config", {
+        target_language: subTrans.target_language || "zh-CN",
+        auto_translate: !!subTrans.auto_translate,
+      });
     }
 
     function saveSub() {
@@ -678,7 +1407,13 @@
       requestJSON("PATCH", API + "/board/subscriptions/" + editId, payload)
         .then(function (d) {
           applySub(d.subscription);
-          okMessage("已保存「" + payload.name + "」的订阅设置");
+          return saveTranslateConfig(d.subscription.id)
+            .then(function () { okMessage("已保存「" + payload.name + "」的订阅设置"); })
+            .catch(function (e) {
+              configMessage("订阅已保存，但翻译设置保存失败：" + e.message);
+            });
+        })
+        .then(function () {
           closeEditor();
           refreshConfig();
         })
@@ -709,6 +1444,7 @@
       setAdding(true);
       setEditId(null);
       setDraft(null);
+      setSubTrans({ target_language: "zh-CN", auto_translate: false });
       setMsg(null);
     }
 
@@ -725,7 +1461,14 @@
           okMessage("已添加订阅「" + payload.name + "」");
           setAdding(false);
           setNewDraft(emptySubDraft());
-          if (d.subscription) applySub(d.subscription);
+          if (d.subscription) {
+            applySub(d.subscription);
+            return saveTranslateConfig(d.subscription.id).catch(function (e) {
+              configMessage("订阅已添加，但翻译设置保存失败：" + e.message);
+            });
+          }
+        })
+        .then(function () {
           refreshConfig();
         })
         .catch(function (e) { configMessage("添加失败：" + e.message); })
@@ -762,13 +1505,37 @@
     }
 
     function metaBits(item) {
+      var tr = transCache[item.id];
+      var note = notesCache[item.id];
       return [
         el("span", { key: "s" }, item.subscription_name || ""),
         el("span", { key: "t" }, fmtTime(item)),
         item.ai_filter_result === 0
           ? el("span", { key: "ai", style: S.aiBadge }, "AI 已过滤")
           : null,
+        tr ? el("span", { key: "tr", style: S.badgeTrans }, "已翻译") : null,
+        note && note.note_text
+          ? el("span", { key: "nt", style: S.badgeSoft }, "有注解")
+          : null,
       ];
+    }
+
+    function isSelected(id) { return selected.indexOf(id) >= 0; }
+
+    function selectBox(item) {
+      return el("input", {
+        type: "checkbox",
+        style: S.check,
+        checked: isSelected(item.id),
+        "aria-label": "选择文章",
+        onClick: function (e) { e.stopPropagation(); },
+        onChange: function (e) { toggleSelect(item.id, e); },
+      });
+    }
+
+    function cardStyle(item, base) {
+      return Object.assign({}, base, isSelected(item.id) ? S.selectedCard : null,
+        item.read ? { opacity: 0.55 } : null);
     }
 
     function renderCard(item) {
@@ -780,30 +1547,95 @@
         }));
       }
       children.push(el("div", {
-        key: "b", style: Object.assign({}, S.cardBody, item.read ? { opacity: 0.55 } : null),
+        key: "b", style: Object.assign({}, S.cardBody, item.read ? { opacity: 0.7 } : null),
       }, [
-        el("div", { key: "t", style: S.cardTitle }, item.title || "(无标题)"),
+        el("div", {
+          key: "h",
+          style: { display: "flex", gap: 8, alignItems: "flex-start" },
+        }, selectBox(item), el("div", { style: S.cardTitle }, item.title || "(无标题)")),
         el("div", { key: "m", style: S.metaLine }, metaBits(item)),
         el("div", { key: "f" }, actionButtons(item)),
       ]));
       return el("div", {
-        key: item.id, style: S.card, "data-airss-card": item.id,
+        key: item.id, style: cardStyle(item, S.card), "data-airss-card": item.id,
         onClick: function () { openItem(item); },
       }, children);
     }
 
     function renderRow(item) {
-      return el("div", {
-        key: item.id, style: Object.assign({}, S.row, item.read ? { opacity: 0.55 } : null),
+      var expanded = expandedId === item.id;
+      var body = expandBody[item.id];
+      var row = el("div", {
+        key: "row", style: cardStyle(item, S.row),
         "data-airss-card": item.id,
         onClick: function () { openItem(item); },
       },
+        selectBox(item),
         item.image ? el("img", {
           src: item.image, loading: "lazy", alt: "",
           style: { width: 84, height: 84, objectFit: "cover", borderRadius: 8, flexShrink: 0 },
         }) : null,
-        el("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 6 } },
+        el("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } },
           el("div", { style: S.cardTitle }, item.title || "(无标题)"),
+          el("div", { style: S.metaLine }, metaBits(item)),
+          el("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+            actionButtons(item),
+            el("button", {
+              style: S.fbBtn,
+              onClick: function (e) { toggleExpand(item, e); },
+            }, expanded ? "收起" : "展开")
+          )
+        )
+      );
+      if (!expanded) {
+        return el("div", { key: item.id, style: { display: "flex", flexDirection: "column" } },
+          row,
+          el("div", {
+            style: {
+              maxHeight: 0, opacity: 0, overflow: "hidden",
+              transition: "max-height .25s ease, opacity .2s ease",
+            },
+          })
+        );
+      }
+      return el("div", { key: item.id, style: { display: "flex", flexDirection: "column" } },
+        row,
+        el("div", {
+          style: {
+            maxHeight: 4000, opacity: 1, overflow: "hidden",
+            border: "1px solid rgba(127,127,127,.3)", borderTop: "none",
+            borderRadius: "0 0 10px 10px", padding: "10px 14px",
+            lineHeight: 1.7, wordBreak: "break-word",
+            transition: "max-height .25s ease, opacity .2s ease",
+          },
+        },
+          body === undefined
+            ? el("span", { style: S.note }, "正文加载中…")
+            : (body
+                ? el("div", { dangerouslySetInnerHTML: { __html: body } })
+                : el("span", { style: S.note }, "这个源没有给正文，点开文章看原文链接。"))
+        )
+      );
+    }
+
+    function renderMagazine(item) {
+      return el("div", {
+        key: item.id, style: cardStyle(item, S.magazineCard),
+        "data-airss-card": item.id,
+        onClick: function () { openItem(item); },
+      },
+        item.image ? el("img", {
+          src: item.image, loading: "lazy", alt: "", style: S.magazineImg,
+        }) : null,
+        el("div", {
+          style: {
+            padding: "10px 12px", display: "flex", flexDirection: "column",
+            gap: 6, flex: 1, minWidth: 0,
+          },
+        },
+          el("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } },
+            selectBox(item),
+            el("div", { style: S.cardTitle }, item.title || "(无标题)")),
           el("div", { style: S.metaLine }, metaBits(item)),
           actionButtons(item)
         )
@@ -812,62 +1644,25 @@
 
     function renderOverlay() {
       if (!current) return null;
-      var d = detail && detail.id === current.id ? detail : current;
-      var images = (detail && detail.image_urls && detail.image_urls.length)
-        ? detail.image_urls
-        : (current.image ? [current.image] : []);
-      var kids = [
-        el("div", {
-          key: "hd",
-          style: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
+      var idx = currentIndex();
+      return el(ArticleOverlay, {
+        key: "overlay-" + current.id,
+        current: current,
+        detail: detail,
+        defaultLang: transLang,
+        translationCache: transCache,
+        notesCache: notesCache,
+        onClose: closeOverlay,
+        onTranslation: cacheTranslation,
+        onNoteSaved: cacheNote,
+        onLangChange: function (v) {
+          setTransLang(v);
+          writeStored("airss.translateLang", v);
         },
-          el("h2", { style: { fontSize: 19, lineHeight: 1.45, margin: 0 } }, d.title || "(无标题)"),
-          el("button", { style: S.btn, onClick: closeOverlay }, "关闭")
-        ),
-        el("div", { key: "mt", style: Object.assign({}, S.metaLine, { marginTop: 8 }) },
-          el("span", null, d.subscription_name || ""),
-          d.author ? el("span", null, d.author) : null,
-          el("span", null, fmtTime(d)),
-          d.ai_filter_result === 0 ? el("span", { style: S.aiBadge }, "AI 已过滤") : null
-        ),
-      ];
-      images.forEach(function (src, i) {
-        kids.push(el("img", {
-          key: "im" + i, src: src, alt: "", loading: "lazy",
-          style: { width: "100%", height: "auto", display: "block", borderRadius: 8, marginTop: 12 },
-        }));
+        onPrev: idx > 0 ? function () { navigate(-1); } : null,
+        onNext: idx >= 0 && idx < items.length - 1 ? function () { navigate(1); } : null,
+        renderActions: actionButtons,
       });
-      if (detail && detail.id === current.id) {
-        if (detail.content) {
-          kids.push(el("div", {
-            key: "ct",
-            style: { marginTop: 14, lineHeight: 1.7, wordBreak: "break-word" },
-            dangerouslySetInnerHTML: { __html: detail.content },
-          }));
-        } else {
-          kids.push(el("p", { key: "nc", style: { marginTop: 14, opacity: 0.7 } },
-            "这个源没有给正文，点下方「在浏览器打开原文」看全文。"));
-        }
-      } else {
-        kids.push(el("p", { key: "ld", style: { marginTop: 14, opacity: 0.7 } }, "正文加载中…"));
-      }
-      kids.push(el("div", { key: "fb", style: { marginTop: 16 } }, actionButtons(d)));
-      kids.push(el("div", {
-        key: "ft",
-        style: { display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" },
-      },
-        d.link
-          ? el("a", {
-              href: d.link, target: "_blank", rel: "noreferrer",
-              style: Object.assign({}, S.btn, { textDecoration: "none", display: "inline-block" }),
-            }, "在浏览器打开原文")
-          : null,
-        el("button", { style: S.btn, onClick: closeOverlay }, "关闭")
-      ));
-      return el("div", {
-        style: S.overlayBg,
-        onClick: function (e) { if (e.target === e.currentTarget) closeOverlay(); },
-      }, el("div", { style: S.panel }, kids));
     }
 
     /* ---- 展板页 ---- */
@@ -907,7 +1702,11 @@
       }));
 
       var subOptions = [el("option", { key: "all", value: "" }, "全部订阅源")].concat(
-        subs.filter(function (s) { return groupId === null || s.group_id === groupId; })
+        subs.filter(function (s) {
+          if (groupId !== null && s.group_id !== groupId) return false;
+          // 隐藏的订阅不出现在选择器里，除非当前正选中它
+          return s.visible_in_panel !== false || subId === s.id;
+        })
           .map(function (s) { return el("option", { key: s.id, value: String(s.id) }, s.name); })
       );
 
@@ -926,18 +1725,45 @@
             style: Object.assign({}, S.input, { width: 190 }),
           }),
           el("button", { style: S.btn, onClick: function () { setQuery(qInput); } }, "搜索"),
+          el(ViewToggle, {
+            value: layout,
+            onChange: function (v) {
+              setLayout(v);
+              writeStored("airss.viewMode", v);
+            },
+          }),
           el("button", {
-            style: Object.assign({}, S.chip, layout === "grid" ? S.chipOn : null),
-            onClick: function () { setLayout("grid"); },
-          }, "海报墙"),
-          el("button", {
-            style: Object.assign({}, S.chip, layout === "list" ? S.chipOn : null),
-            onClick: function () { setLayout("list"); },
-          }, "列表"),
+            style: S.btn,
+            onClick: function () {
+              if (selected.length === items.length) clearSelection();
+              else setSelected(items.map(function (it) { return it.id; }));
+            },
+          }, selected.length === items.length && items.length ? "取消全选" : "全选本页"),
           el("button", { style: S.btn, onClick: onReadAll }, "全部标已读"),
           el("button", { style: S.btn, onClick: onRefresh }, "刷新")
         )
       );
+
+      var batchBar = selected.length
+        ? el("div", { style: S.batchBar },
+            el("span", { style: { fontWeight: 600, fontSize: 13 } },
+              "已选 " + selected.length + " 篇"),
+            el(BatchActionsMenu, {
+              count: selected.length,
+              lang: transLang,
+              onLangChange: function (v) {
+                setTransLang(v);
+                writeStored("airss.translateLang", v);
+              },
+              busy: batchBusy,
+              progress: batchProgress,
+              onMarkRead: function () { batchSetRead(true); },
+              onMarkUnread: function () { batchSetRead(false); },
+              onTranslate: batchTranslate,
+              onClear: clearSelection,
+            })
+          )
+        : null;
 
       var main;
       if (available === false) {
@@ -954,20 +1780,26 @@
             : view === "filtered" ? "没有被 AI 过滤的条目。"
             : "没有符合条件的条目。");
       } else {
+        var listNode;
+        if (layout === "magazine") {
+          listNode = el("div", { style: S.magazineGrid }, items.map(renderMagazine));
+        } else if (layout === "list") {
+          listNode = el("div", { style: S.listWrap }, items.map(renderRow));
+        } else {
+          listNode = el("div", { style: S.grid }, items.map(renderCard));
+        }
         main = el("div", null,
-          layout === "grid"
-            ? el("div", { style: S.grid }, items.map(renderCard))
-            : el("div", { style: S.listWrap }, items.map(renderRow)),
+          listNode,
           loading ? el("div", { style: S.empty }, "加载中…") : null
         );
       }
 
       return el("div", null,
-        header, toolbar, main,
+        header, renderNotice(), toolbar, batchBar, main,
         el("div", { id: "airss-sentinel", style: { height: 8 } }),
-        view === "unread" && items.length > 0
+        items.length > 0
           ? el("div", { style: Object.assign({}, S.note, { textAlign: "center", padding: "6px 0 14px" }) },
-              "停在底部约 2.5 秒，当前屏幕这一屏未读会自动标已读")
+              "滚过屏幕顶部的文章会自动标已读；快捷键 J/K 上下篇，打开文章后 T 翻译、N 注解")
           : null,
         renderOverlay()
       );
@@ -1012,6 +1844,7 @@
 
     function renderSubEditor(sub, d, isNew) {
       return el("div", {
+        key: isNew ? "new-sub-editor" : "sub-editor-" + (sub && sub.id),
         style: Object.assign({}, S.subRow, {
           alignItems: "stretch", flexDirection: "column", gap: 10,
           borderColor: "rgba(80,140,220,.55)",
@@ -1065,8 +1898,42 @@
           }),
           check("暂停抓取", d.stop, function (e) {
             setDraftField("stop", e.target.checked);
+          }),
+          check("在展板显示", d.visible_in_panel !== false, function (e) {
+            setDraftField("visible_in_panel", e.target.checked);
           })
         ),
+        (function () {
+          var opts = LANGUAGES.slice();
+          var hasLang = false;
+          for (var i = 0; i < opts.length; i++) {
+            if (opts[i][0] === subTrans.target_language) hasLang = true;
+          }
+          if (!hasLang && subTrans.target_language) {
+            opts.unshift([subTrans.target_language, subTrans.target_language]);
+          }
+          return el("div", {
+            style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
+          },
+            el("span", { style: S.label }, "翻译设置"),
+            el("select", {
+              style: S.smallSelect,
+              value: subTrans.target_language,
+              onChange: function (e) {
+                setSubTrans(function (prev) {
+                  return Object.assign({}, prev, { target_language: e.target.value });
+                });
+              },
+            }, opts.map(function (l) {
+              return el("option", { key: l[0], value: l[0] }, l[1]);
+            })),
+            check("打开文章时自动翻译", subTrans.auto_translate, function (e) {
+              setSubTrans(function (prev) {
+                return Object.assign({}, prev, { auto_translate: e.target.checked });
+              });
+            })
+          );
+        })(),
         el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
           el("button", {
             style: S.btn, disabled: saveBusy,
@@ -1116,6 +1983,7 @@
                   s.stop ? el("span", { style: S.aiBadge }, "已暂停") : null,
                   s.ai_summary_enabled ? el("span", { style: S.aiBadge }, "总结聚合") : null,
                   s.enable_proxy ? el("span", { style: S.srcBadge }, "代理") : null,
+                  s.visible_in_panel === false ? el("span", { style: S.badgeSoft }, "面板已隐藏") : null,
                   s.unread ? el("span", { style: S.unreadBadge }, "未读 " + s.unread) : null,
                   s.error_count > 0 ? el("span", { style: S.aiBadge }, "失败 " + s.error_count + " 次") : null
                 ),
@@ -1135,6 +2003,10 @@
                 switchBtn(s.ai_summary_enabled, "总结", function (e) { onToggleSummary(s, e); }),
                 switchBtn(!s.stop, "抓取", function (e) { onToggleStop(s, e); }),
                 switchBtn(s.enable_proxy, "代理", function (e) { onToggleField(s, "enable_proxy", e); }),
+                el(SubscriptionVisibilityToggle, {
+                  visible: s.visible_in_panel !== false,
+                  onToggle: function (e) { onToggleVisibility(s, e); },
+                }),
                 el("button", { style: S.btn, onClick: function () { beginEditSub(s); } }, "编辑设置")
               )
             );
